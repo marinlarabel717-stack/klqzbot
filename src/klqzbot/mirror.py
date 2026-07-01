@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +48,16 @@ async def create_listener_client(args: argparse.Namespace) -> TelegramClient:
     settings = load_settings()
     session_path = resolve_listener_session_path(args)
     client = TelegramClient(str(session_path), settings.api_id, settings.api_hash)
-    await client.connect()
+    try:
+        await client.connect()
+    except sqlite3.OperationalError as exc:
+        message = str(exc).lower()
+        if "database is locked" in message:
+            raise RuntimeError(
+                "监听账号的 session 文件正被别的进程占用；请先停止其他正在使用这个 .session 的程序后再重试。"
+                f" 当前 session: {session_path}"
+            ) from exc
+        raise
     if not await client.is_user_authorized():
         raise RuntimeError(f"监听账号 session 未授权: {session_path}")
     return client
