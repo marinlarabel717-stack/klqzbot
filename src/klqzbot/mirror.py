@@ -10,7 +10,7 @@ from getpass import getpass
 from pathlib import Path
 from typing import Any
 
-from telethon import TelegramClient, events
+from telethon import Button, TelegramClient, events
 from telethon.errors import (
     PhoneCodeExpiredError,
     PhoneCodeInvalidError,
@@ -111,6 +111,26 @@ def prompt_required(label: str, *, secret: bool = False) -> str:
         if value:
             return value
         print("输入不能为空，请重新输入。", flush=True)
+
+MENU_SOURCE = "menu:source"
+MENU_TARGET = "menu:target"
+MENU_LISTENER_PHONE = "menu:listener_phone"
+MENU_BUTTONS = "menu:buttons"
+MENU_PREVIEW = "menu:preview"
+MENU_CONFIG = "menu:config"
+
+PENDING_SOURCE = "source"
+PENDING_TARGET = "target"
+PENDING_LISTENER_PHONE = "listener_phone"
+PENDING_BUTTONS = "buttons"
+
+
+def build_admin_menu_buttons() -> list[list[Any]]:
+    return [
+        [Button.inline("监听群", MENU_SOURCE), Button.inline("指定群", MENU_TARGET)],
+        [Button.inline("监听号", MENU_LISTENER_PHONE), Button.inline("按钮配置", MENU_BUTTONS)],
+        [Button.inline("预览按钮", MENU_PREVIEW), Button.inline("查看当前配置", MENU_CONFIG)],
+    ]
 
 
 @dataclass(slots=True)
@@ -222,6 +242,20 @@ class LoginCodeStore:
             self.path.unlink(missing_ok=True)
 
 
+@dataclass(slots=True)
+class AdminInputState:
+    pending_by_user: dict[int, str] = field(default_factory=dict)
+
+    def get(self, user_id: int) -> str:
+        return self.pending_by_user.get(int(user_id), "")
+
+    def set(self, user_id: int, pending: str) -> None:
+        self.pending_by_user[int(user_id)] = pending
+
+    def clear(self, user_id: int) -> None:
+        self.pending_by_user.pop(int(user_id), None)
+
+
 class MirrorRuntime:
     def __init__(
         self,
@@ -231,12 +265,14 @@ class MirrorRuntime:
         runtime_store: RuntimeConfigStore,
         sender_client: TelegramClient,
         button_store: ButtonConfigStore,
+        admin_state: AdminInputState,
     ) -> None:
         self.args = args
         self.settings = settings
         self.runtime_store = runtime_store
         self.sender_client = sender_client
         self.button_store = button_store
+        self.admin_state = admin_state
         self.listener_client: TelegramClient | None = None
         self.listener_handler: Any = None
         self.listener_key: tuple[str, str, str] | None = None
@@ -501,6 +537,42 @@ def format_runtime_config(
         f"监听session：{runtime_config.listener_session or 'session/listener.session'}\n"
         f"按钮数量：{button_store.count_buttons()}\n"
         f"监听状态：{'运行中' if mirror_runtime.listener_client is not None else '未启动'}"
+    )
+
+
+def format_admin_panel(
+    runtime_config: RuntimeConfig,
+    button_store: ButtonConfigStore,
+    mirror_runtime: MirrorRuntime,
+    *,
+    hint: str = "",
+) -> str:
+    lines = [
+        "管理面板",
+        "",
+        format_runtime_config(runtime_config, button_store, mirror_runtime),
+        "",
+        "点下面按钮选择操作；点完后直接发送下一条内容即可。",
+        "登录监听号仍支持：/sendcode /code /listener_password /listener_session",
+        "清空按钮仍支持：/clearbuttons",
+    ]
+    if hint:
+        lines.extend(["", hint])
+    return "\n".join(lines)
+
+
+async def reply_admin_panel(
+    event: Any,
+    runtime_store: RuntimeConfigStore,
+    button_store: ButtonConfigStore,
+    mirror_runtime: MirrorRuntime,
+    *,
+    hint: str = "",
+) -> None:
+    runtime_config = runtime_store.load()
+    await event.reply(
+        format_admin_panel(runtime_config, button_store, mirror_runtime, hint=hint),
+        buttons=build_admin_menu_buttons(),
     )
 
 
@@ -787,12 +859,273 @@ async def handle_admin_button_message(
     await event.reply(f"按钮已更新，共 {button_store.count_buttons()} 个：\n{button_store.render_text()}")
 
 
+async def apply_pending_admin_input(
+    *,
+    sender_id: int,
+    text: str,
+    event: Any,
+    button_store: ButtonConfigStore,
+    runtime_store: RuntimeConfigStore,
+    mirror_runtime: MirrorRuntime,
+) -> bool:
+    pending = mirror_runtime.admin_state.get(sender_id)
+    if not pending:
+        return False
+
+    if pending == PENDING_SOURCE:
+        runtime_store.update(source_chat=text)
+        mirror_runtime.admin_state.clear(sender_id)
+        status = await mirror_runtime.reload()
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"A群已更新为：{text}\n{status}")
+        return True
+
+    if pending == PENDING_TARGET:
+        runtime_store.update(target_chat=text)
+        mirror_runtime.admin_state.clear(sender_id)
+        status = await mirror_runtime.reload()
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"B群已更新为：{text}\n{status}")
+        return True
+
+    if pending == PENDING_LISTENER_PHONE:
+        runtime_store.update(listener_phone=text)
+        mirror_runtime.admin_state.clear(sender_id)
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"监听手机号已保存：{text}\n下一步发送 /sendcode 获取验证码。")
+        return True
+
+    if pending == PENDING_BUTTONS:
+        button_specs = parse_button_lines(text)
+        if not button_specs:
+            await reply_admin_panel(
+                event,
+                runtime_store,
+                button_store,
+                mirror_runtime,
+                hint="按钮格式不对，请重新发一次：\n按钮文字|https://example.com\n按钮A|https://a.com && 按钮B|https://b.com",
+            )
+            return True
+        button_store.save(button_specs)
+        mirror_runtime.admin_state.clear(sender_id)
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"按钮已更新，共 {button_store.count_buttons()} 个。\n{button_store.render_text()}")
+        return True
+
+    return False
+
+
+async def handle_admin_callback(
+    event: Any,
+    settings: Settings,
+    button_store: ButtonConfigStore,
+    runtime_store: RuntimeConfigStore,
+    mirror_runtime: MirrorRuntime,
+) -> None:
+    sender_id = getattr(event, "sender_id", None)
+    if sender_id is None or int(sender_id) not in settings.button_admin_ids:
+        await event.answer("无权限", alert=True)
+        return
+
+    action = (getattr(event, "data", b"") or b"").decode("utf-8", errors="ignore")
+    runtime_config = runtime_store.load()
+
+    if action == MENU_SOURCE:
+        mirror_runtime.admin_state.set(int(sender_id), PENDING_SOURCE)
+        await event.edit(format_admin_panel(runtime_config, button_store, mirror_runtime, hint="请直接发送 A 群链接、@用户名，或 t.me/+ 邀请链接。"), buttons=build_admin_menu_buttons())
+        await event.answer("等待输入 A 群")
+        return
+
+    if action == MENU_TARGET:
+        mirror_runtime.admin_state.set(int(sender_id), PENDING_TARGET)
+        await event.edit(format_admin_panel(runtime_config, button_store, mirror_runtime, hint="请直接发送 B 群链接、@用户名，或 t.me/+ 邀请链接。"), buttons=build_admin_menu_buttons())
+        await event.answer("等待输入 B 群")
+        return
+
+    if action == MENU_LISTENER_PHONE:
+        mirror_runtime.admin_state.set(int(sender_id), PENDING_LISTENER_PHONE)
+        await event.edit(format_admin_panel(runtime_config, button_store, mirror_runtime, hint="请直接发送监听手机号，例如：+8613800000000"), buttons=build_admin_menu_buttons())
+        await event.answer("等待输入监听号")
+        return
+
+    if action == MENU_BUTTONS:
+        mirror_runtime.admin_state.set(int(sender_id), PENDING_BUTTONS)
+        await event.edit(
+            format_admin_panel(
+                runtime_config,
+                button_store,
+                mirror_runtime,
+                hint="请直接发送按钮配置：\n按钮文字|https://example.com\n同一行多个按钮：按钮A|https://a.com && 按钮B|https://b.com",
+            ),
+            buttons=build_admin_menu_buttons(),
+        )
+        await event.answer("等待输入按钮配置")
+        return
+
+    if action == MENU_PREVIEW:
+        mirror_runtime.admin_state.clear(int(sender_id))
+        if button_store.count_buttons() <= 0:
+            await event.answer("当前还没有按钮配置", alert=True)
+            return
+        await event.reply("当前按钮预览如下：", buttons=button_store.render_buttons())
+        await event.answer("已发送按钮预览")
+        return
+
+    if action == MENU_CONFIG:
+        mirror_runtime.admin_state.clear(int(sender_id))
+        await event.edit(format_admin_panel(runtime_config, button_store, mirror_runtime, hint="这是当前配置快照。"), buttons=build_admin_menu_buttons())
+        await event.answer("已刷新配置")
+        return
+
+    await event.answer("未知操作")
+
+
+async def handle_admin_button_message(
+    event: Any,
+    settings: Settings,
+    button_store: ButtonConfigStore,
+    runtime_store: RuntimeConfigStore,
+    code_store: LoginCodeStore,
+    mirror_runtime: MirrorRuntime,
+    args: argparse.Namespace,
+) -> None:
+    if not getattr(event, "is_private", False):
+        return
+
+    sender_id = getattr(event, "sender_id", None)
+    if sender_id is None or int(sender_id) not in settings.button_admin_ids:
+        log_line(
+            "admin_message_ignored",
+            sender_id=sender_id,
+            reason="not_in_button_admin_ids",
+            allowed_admin_ids=sorted(settings.button_admin_ids),
+        )
+        return
+
+    text = str(getattr(event, "raw_text", "") or "").strip()
+    if not text:
+        return
+
+    lowered = text.lower()
+    if lowered in {"/start", "/help", "/menu"}:
+        mirror_runtime.admin_state.clear(int(sender_id))
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="用下面的按钮操作就行，不想点的话原来的命令也还能用。")
+        return
+
+    if lowered in {"/cancel", "取消"}:
+        mirror_runtime.admin_state.clear(int(sender_id))
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="已取消当前输入。")
+        return
+
+    if not text.startswith("/"):
+        handled = await apply_pending_admin_input(
+            sender_id=int(sender_id),
+            text=text,
+            event=event,
+            button_store=button_store,
+            runtime_store=runtime_store,
+            mirror_runtime=mirror_runtime,
+        )
+        if handled:
+            return
+
+    runtime_config = runtime_store.load()
+
+    if lowered == "/config":
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="这是当前配置快照。")
+        return
+
+    if lowered.startswith("/source"):
+        value = extract_command_arg(text, "/source")
+        if not value:
+            await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"当前 A 群：{runtime_config.source_chat or '未配置'}")
+            return
+        runtime_store.update(source_chat=value)
+        status = await mirror_runtime.reload()
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"A群已更新为：{value}\n{status}")
+        return
+
+    if lowered.startswith("/target"):
+        value = extract_command_arg(text, "/target")
+        if not value:
+            await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"当前 B 群：{runtime_config.target_chat or '未配置'}")
+            return
+        runtime_store.update(target_chat=value)
+        status = await mirror_runtime.reload()
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"B群已更新为：{value}\n{status}")
+        return
+
+    if lowered.startswith("/listener_phone"):
+        value = extract_command_arg(text, "/listener_phone")
+        if not value:
+            await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"当前监听手机号：{runtime_config.listener_phone or '未配置'}")
+            return
+        runtime_store.update(listener_phone=value)
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"监听手机号已保存：{value}\n下一步发送 /sendcode 获取验证码。")
+        return
+
+    if lowered.startswith("/listener_session"):
+        value = extract_command_arg(text, "/listener_session")
+        if not value:
+            await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"当前监听 session：{runtime_config.listener_session or 'session/listener.session'}")
+            return
+        runtime_store.update(listener_session=value)
+        status = await mirror_runtime.reload()
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"监听 session 路径已保存：{value}\n{status}")
+        return
+
+    if lowered.startswith("/listener_password"):
+        value = extract_command_arg(text, "/listener_password")
+        if not value:
+            await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="请这样发：/listener_password 你的两步密码")
+            return
+        runtime_store.update(listener_password=value)
+        pending = code_store.load()
+        if pending.password_needed:
+            result = await finish_listener_login_with_password(password=value, settings=settings, runtime_store=runtime_store, code_store=code_store)
+            status = await mirror_runtime.reload()
+            await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"{result}\n{status}")
+            return
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="两步密码已保存。")
+        return
+
+    if lowered.startswith("/sendcode"):
+        value = extract_command_arg(text, "/sendcode")
+        result = await send_listener_code(args=args, settings=settings, runtime_store=runtime_store, code_store=code_store, phone_override=value)
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=result)
+        return
+
+    if lowered.startswith("/code"):
+        value = extract_command_arg(text, "/code")
+        if not value:
+            await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="请这样发：/code 12345")
+            return
+        result = await finish_listener_code_login(code=value, args=args, settings=settings, runtime_store=runtime_store, code_store=code_store)
+        status = await mirror_runtime.reload()
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"{result}\n{status}")
+        return
+
+    if lowered in {"/buttons", "按钮", "查看按钮"}:
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=button_store.render_text())
+        return
+
+    if lowered in {"/clearbuttons", "/clear", "清空按钮"}:
+        button_store.clear()
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="已清空按钮配置。")
+        return
+
+    button_specs = parse_button_lines(text)
+    if not button_specs:
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="未识别到有效操作。\n你可以点面板按钮，或者继续用 /source /target /sendcode /code 这些命令。")
+        return
+
+    button_store.save(button_specs)
+    await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"按钮已更新，共 {button_store.count_buttons()} 个。\n{button_store.render_text()}")
+
+
 async def run_mirror(args: argparse.Namespace) -> int:
     settings = load_settings()
     sender_client = await create_sender_bot_client()
     runtime_store = resolve_runtime_store()
     code_store = LoginCodeStore((Path.cwd() / "data" / "login-code.json").resolve())
     button_store = ButtonConfigStore((Path.cwd() / "data" / "mirror-buttons.json").resolve())
+    admin_state = AdminInputState()
     button_store.load()
     mirror_runtime = MirrorRuntime(
         args=args,
@@ -800,6 +1133,7 @@ async def run_mirror(args: argparse.Namespace) -> int:
         runtime_store=runtime_store,
         sender_client=sender_client,
         button_store=button_store,
+        admin_state=admin_state,
     )
     try:
         status = await mirror_runtime.reload()
@@ -828,6 +1162,23 @@ async def run_mirror(args: argparse.Namespace) -> int:
             except Exception as exc:
                 log_line(
                     "admin_command_failed",
+                    sender_id=getattr(event, "sender_id", None),
+                    error=str(exc) or exc.__class__.__name__,
+                )
+
+        @sender_client.on(events.CallbackQuery())
+        async def on_admin_callback(event: Any) -> None:
+            try:
+                await handle_admin_callback(
+                    event,
+                    settings,
+                    button_store,
+                    runtime_store,
+                    mirror_runtime,
+                )
+            except Exception as exc:
+                log_line(
+                    "admin_callback_failed",
                     sender_id=getattr(event, "sender_id", None),
                     error=str(exc) or exc.__class__.__name__,
                 )
