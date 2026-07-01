@@ -126,6 +126,35 @@ def extract_configured_buttons(message_text: str, *, enabled: bool) -> tuple[str
     return trimmed_body, button_rows or None
 
 
+def parse_button_lines(message_text: str) -> list[dict[str, str]]:
+    buttons: list[dict[str, str]] = []
+    for raw_line in str(message_text or "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        matched = re.match(r"^(?P<label>[^|｜]+?)\s*[|｜]\s*(?P<url>https?://\S+)$", line, re.I)
+        if not matched:
+            continue
+        buttons.append(
+            {
+                "text": matched.group("label").strip() or "按钮",
+                "url": matched.group("url").strip(),
+            }
+        )
+    return buttons
+
+
+def build_url_buttons(button_specs: list[dict[str, str]]) -> Any:
+    rows: list[list[Any]] = []
+    for item in button_specs:
+        text = str(item.get("text", "") or "").strip()
+        url = str(item.get("url", "") or "").strip()
+        if not text or not url:
+            continue
+        rows.append([Button.url(text, url)])
+    return rows or None
+
+
 def infer_media_file(message: Any, media_bytes: bytes | None) -> BytesIO | None:
     if media_bytes is None:
         return None

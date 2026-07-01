@@ -4,6 +4,7 @@ import argparse
 import json
 import sqlite3
 import sys
+from dataclasses import dataclass, field
 from getpass import getpass
 from pathlib import Path
 from typing import Any
@@ -12,7 +13,7 @@ from telethon import TelegramClient, events
 from telethon.errors import PhoneCodeExpiredError, PhoneCodeInvalidError, SessionPasswordNeededError
 
 from .config import Settings, load_settings
-from .telegram_utils import extract_configured_buttons, infer_media_file, resolve_entity
+from .telegram_utils import build_url_buttons, infer_media_file, parse_button_lines, resolve_entity
 
 
 def log_line(event: str, **payload: Any) -> None:
@@ -75,6 +76,55 @@ def reset_sender_session(session_path: Path) -> None:
 
 def can_prompt() -> bool:
     return bool(getattr(sys.stdin, "isatty", lambda: False)())
+
+
+@dataclass(slots=True)
+class ButtonConfigStore:
+    path: Path
+    button_specs: list[dict[str, str]] = field(default_factory=list)
+
+    def load(self) -> None:
+        if not self.path.exists():
+            self.button_specs = []
+            return
+        try:
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:
+            self.button_specs = []
+            return
+        items = payload.get("buttons", []) if isinstance(payload, dict) else []
+        normalized: list[dict[str, str]] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "") or "").strip()
+            url = str(item.get("url", "") or "").strip()
+            if text and url:
+                normalized.append({"text": text, "url": url})
+        self.button_specs = normalized
+
+    def save(self, button_specs: list[dict[str, str]]) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.button_specs = [
+            {"text": str(item.get("text", "") or "").strip(), "url": str(item.get("url", "") or "").strip()}
+            for item in button_specs
+            if str(item.get("text", "") or "").strip() and str(item.get("url", "") or "").strip()
+        ]
+        payload = {"buttons": self.button_specs}
+        self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def clear(self) -> None:
+        self.button_specs = []
+        if self.path.exists():
+            self.path.unlink(missing_ok=True)
+
+    def render_buttons(self) -> Any:
+        return build_url_buttons(self.button_specs)
+
+    def render_text(self) -> str:
+        if not self.button_specs:
+            return "当前没有配置按钮。"
+        return "\n".join(f"{item['text']}｜{item['url']}" for item in self.button_specs)
 
 
 async def authorize_listener_client(
@@ -165,22 +215,15 @@ async def mirror_message(
     target_entity: Any,
     message: Any,
     *,
-    button_admin_ids: frozenset[int],
+    button_store: ButtonConfigStore,
 ) -> Any:
     if getattr(message, "action", None) is not None:
         return None
 
-    sender_id = getattr(message, "sender_id", None)
     original_text = str(getattr(message, "message", None) or "")
-    allow_buttons = sender_id is not None and int(sender_id) in button_admin_ids
-
-    text, buttons = extract_configured_buttons(
-        original_text,
-        enabled=allow_buttons,
-    )
+    text = original_text
+    buttons = button_store.render_buttons()
     entities = getattr(message, "entities", None)
-    if text != original_text:
-        entities = None
     has_media = getattr(message, "media", None) is not None
 
     if has_media:
@@ -208,10 +251,61 @@ async def mirror_message(
     )
 
 
+async def handle_admin_button_message(
+    event: Any,
+    settings: Settings,
+    button_store: ButtonConfigStore,
+) -> None:
+    if not getattr(event, "is_private", False):
+        return
+
+    sender_id = getattr(event, "sender_id", None)
+    if sender_id is None or int(sender_id) not in settings.button_admin_ids:
+        return
+
+    text = str(getattr(event, "raw_text", "") or "").strip()
+    if not text:
+        return
+
+    lowered = text.lower()
+    if lowered in {"/start", "/help"}:
+        await event.reply(
+            "按钮配置格式：\n"
+            "按钮文字｜https://example.com\n"
+            "按钮文字2｜https://example.com/2\n\n"
+            "可用命令：\n"
+            "/buttons 查看当前按钮\n"
+            "/clearbuttons 清空当前按钮"
+        )
+        return
+
+    if lowered in {"/buttons", "按钮", "查看按钮"}:
+        await event.reply(button_store.render_text())
+        return
+
+    if lowered in {"/clearbuttons", "/clear", "清空按钮"}:
+        button_store.clear()
+        await event.reply("已清空按钮配置。")
+        return
+
+    button_specs = parse_button_lines(text)
+    if not button_specs:
+        await event.reply(
+            "未识别到有效按钮格式。\n"
+            "请按一行一个发送：按钮文字｜https://example.com"
+        )
+        return
+
+    button_store.save(button_specs)
+    await event.reply(f"按钮已更新，共 {len(button_specs)} 个：\n{button_store.render_text()}")
+
+
 async def run_mirror(args: argparse.Namespace) -> int:
     settings = load_settings()
     listener_client = await create_listener_client(args)
     sender_client = await create_sender_bot_client()
+    button_store = ButtonConfigStore((Path.cwd() / "data" / "mirror-buttons.json").resolve())
+    button_store.load()
     try:
         source_ref, target_ref = resolve_chat_refs(args)
         source_entity = await resolve_entity(listener_client, source_ref)
@@ -227,7 +321,19 @@ async def run_mirror(args: argparse.Namespace) -> int:
             listener_session=str(listener_session),
             sender_mode="bot",
             button_admin_ids=sorted(settings.button_admin_ids),
+            configured_button_count=len(button_store.button_specs),
         )
+
+        @sender_client.on(events.NewMessage(incoming=True))
+        async def on_admin_message(event: Any) -> None:
+            try:
+                await handle_admin_button_message(event, settings, button_store)
+            except Exception as exc:
+                log_line(
+                    "button_config_failed",
+                    sender_id=getattr(event, "sender_id", None),
+                    error=str(exc) or exc.__class__.__name__,
+                )
 
         @listener_client.on(events.NewMessage(chats=source_entity))
         async def on_new_message(event: Any) -> None:
@@ -237,7 +343,7 @@ async def run_mirror(args: argparse.Namespace) -> int:
                     sender_client,
                     target_entity,
                     message,
-                    button_admin_ids=settings.button_admin_ids,
+                    button_store=button_store,
                 )
                 if sent is None:
                     log_line(
