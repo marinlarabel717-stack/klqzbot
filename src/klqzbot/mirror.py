@@ -552,13 +552,31 @@ def format_admin_panel(
         "",
         format_runtime_config(runtime_config, button_store, mirror_runtime),
         "",
-        "点下面按钮选择操作；点完后直接发送下一条内容即可。",
+        "点下面按钮选择操作；点完后机器人会单独发一条引导消息。",
         "登录监听号仍支持：/sendcode /code /listener_password /listener_session",
         "清空按钮仍支持：/clearbuttons",
     ]
     if hint:
         lines.extend(["", hint])
     return "\n".join(lines)
+
+
+def format_admin_flow_message(action: str) -> str:
+    if action == MENU_SOURCE:
+        return "已进入【监听群】设置流程。\n请直接发送 A 群链接、@用户名，或 t.me/+ 邀请链接。\n发送 /cancel 可取消。"
+    if action == MENU_TARGET:
+        return "已进入【指定群】设置流程。\n请直接发送 B 群链接、@用户名，或 t.me/+ 邀请链接。\n发送 /cancel 可取消。"
+    if action == MENU_LISTENER_PHONE:
+        return "已进入【监听号】设置流程。\n请直接发送监听手机号，例如：+8613800000000\n发送 /cancel 可取消。"
+    if action == MENU_BUTTONS:
+        return (
+            "已进入【按钮配置】设置流程。\n"
+            "请直接发送按钮配置：\n"
+            "按钮文字|https://example.com\n"
+            "同一行多个按钮：按钮A|https://a.com && 按钮B|https://b.com\n"
+            "发送 /cancel 可取消。"
+        )
+    return ""
 
 
 async def reply_admin_panel(
@@ -928,33 +946,25 @@ async def handle_admin_callback(
 
     if action == MENU_SOURCE:
         mirror_runtime.admin_state.set(int(sender_id), PENDING_SOURCE)
-        await event.edit(format_admin_panel(runtime_config, button_store, mirror_runtime, hint="请直接发送 A 群链接、@用户名，或 t.me/+ 邀请链接。"), buttons=build_admin_menu_buttons())
+        await event.reply(format_admin_flow_message(action))
         await event.answer("等待输入 A 群")
         return
 
     if action == MENU_TARGET:
         mirror_runtime.admin_state.set(int(sender_id), PENDING_TARGET)
-        await event.edit(format_admin_panel(runtime_config, button_store, mirror_runtime, hint="请直接发送 B 群链接、@用户名，或 t.me/+ 邀请链接。"), buttons=build_admin_menu_buttons())
+        await event.reply(format_admin_flow_message(action))
         await event.answer("等待输入 B 群")
         return
 
     if action == MENU_LISTENER_PHONE:
         mirror_runtime.admin_state.set(int(sender_id), PENDING_LISTENER_PHONE)
-        await event.edit(format_admin_panel(runtime_config, button_store, mirror_runtime, hint="请直接发送监听手机号，例如：+8613800000000"), buttons=build_admin_menu_buttons())
+        await event.reply(format_admin_flow_message(action))
         await event.answer("等待输入监听号")
         return
 
     if action == MENU_BUTTONS:
         mirror_runtime.admin_state.set(int(sender_id), PENDING_BUTTONS)
-        await event.edit(
-            format_admin_panel(
-                runtime_config,
-                button_store,
-                mirror_runtime,
-                hint="请直接发送按钮配置：\n按钮文字|https://example.com\n同一行多个按钮：按钮A|https://a.com && 按钮B|https://b.com",
-            ),
-            buttons=build_admin_menu_buttons(),
-        )
+        await event.reply(format_admin_flow_message(action))
         await event.answer("等待输入按钮配置")
         return
 
@@ -969,7 +979,7 @@ async def handle_admin_callback(
 
     if action == MENU_CONFIG:
         mirror_runtime.admin_state.clear(int(sender_id))
-        await event.edit(format_admin_panel(runtime_config, button_store, mirror_runtime, hint="这是当前配置快照。"), buttons=build_admin_menu_buttons())
+        await event.reply(f"这是当前配置快照。\n\n{format_runtime_config(runtime_config, button_store, mirror_runtime)}")
         await event.answer("已刷新配置")
         return
 
