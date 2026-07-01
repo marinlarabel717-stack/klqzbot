@@ -29,9 +29,9 @@ def build_parser() -> argparse.ArgumentParser:
     clone_parser.add_argument("--dry-run", action="store_true", help="只采集不邀请")
     clone_parser.add_argument("--include-bots", action="store_true", help="默认跳过 bot，开启后包含 bot")
 
-    mirror_parser = subparsers.add_parser("mirror", help="实时同步 A 群消息到 B 群")
-    mirror_parser.add_argument("--session", help="Telethon session 文件路径；不用机器人模式时必填")
-    mirror_parser.add_argument("--bot-token", help="机器人 token；填写后将以机器人身份监听并发送")
+    mirror_parser = subparsers.add_parser("mirror", help="session 监听 A 群，bot 同步发送到 B 群")
+    mirror_parser.add_argument("--session", help="监听账号的 .session 文件路径")
+    mirror_parser.add_argument("--session-dir", default="session", help="自动查找 .session 的目录，默认是 ./session")
     mirror_parser.add_argument("--source", required=True, help="源群引用")
     mirror_parser.add_argument("--target", required=True, help="目标群引用")
     return parser

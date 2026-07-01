@@ -15,28 +15,48 @@ def log_line(event: str, **payload: Any) -> None:
     print(json.dumps({"event": event, **payload}, ensure_ascii=False), flush=True)
 
 
-async def create_mirror_client(args: argparse.Namespace) -> tuple[TelegramClient, str]:
-    settings = load_settings()
-    bot_token = str(getattr(args, "bot_token", "") or settings.bot_token or "").strip()
+def resolve_listener_session_path(args: argparse.Namespace) -> Path:
     session_raw = str(getattr(args, "session", "") or "").strip()
-    session_path = Path(session_raw).expanduser().resolve() if session_raw else (Path.cwd() / "data" / "mirror-bot.session")
-    session_path.parent.mkdir(parents=True, exist_ok=True)
+    if session_raw:
+        session_path = Path(session_raw).expanduser().resolve()
+        if not session_path.exists():
+            raise FileNotFoundError(f"session 文件不存在: {session_path}")
+        return session_path
 
+    session_dir_raw = str(getattr(args, "session_dir", "") or "session").strip() or "session"
+    session_dir = Path(session_dir_raw).expanduser().resolve()
+    session_dir.mkdir(parents=True, exist_ok=True)
+    candidates = sorted(session_dir.glob("*.session"))
+    if not candidates:
+        raise FileNotFoundError(f"未找到可用 session，请把 .session 文件放到目录: {session_dir}")
+    return candidates[0]
+
+
+async def create_listener_client(args: argparse.Namespace) -> TelegramClient:
+    settings = load_settings()
+    session_path = resolve_listener_session_path(args)
     client = TelegramClient(str(session_path), settings.api_id, settings.api_hash)
-    if bot_token:
-        await client.start(bot_token=bot_token)
-        return client, "bot"
-
-    if not session_raw:
-        raise RuntimeError("未提供 --session，且 BOT_TOKEN 也未配置")
     await client.connect()
     if not await client.is_user_authorized():
-        raise RuntimeError("当前 session 未授权")
-    return client, "user"
+        raise RuntimeError(f"监听账号 session 未授权: {session_path}")
+    return client
+
+
+async def create_sender_bot_client() -> TelegramClient:
+    settings = load_settings()
+    bot_token = settings.bot_token.strip()
+    if not bot_token:
+        raise RuntimeError("BOT_TOKEN 未配置；B 群同步发送必须使用机器人 token")
+
+    session_path = (Path.cwd() / "data" / "sender-bot.session").resolve()
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+    client = TelegramClient(str(session_path), settings.api_id, settings.api_hash)
+    await client.start(bot_token=bot_token)
+    return client
 
 
 async def mirror_message(
-    client: TelegramClient,
+    sender_client: TelegramClient,
     target_entity: Any,
     message: Any,
 ) -> Any:
@@ -52,7 +72,7 @@ async def mirror_message(
         media_bytes = await message.download_media(file=bytes)
         media_file = infer_media_file(message, media_bytes)
         if media_file is not None:
-            return await client.send_file(
+            return await sender_client.send_file(
                 entity=target_entity,
                 file=media_file,
                 caption=text or "",
@@ -64,7 +84,7 @@ async def mirror_message(
     if not text and not buttons:
         return None
 
-    return await client.send_message(
+    return await sender_client.send_message(
         entity=target_entity,
         message=text or "",
         formatting_entities=entities,
@@ -74,20 +94,27 @@ async def mirror_message(
 
 
 async def run_mirror(args: argparse.Namespace) -> int:
-    client, auth_mode = await create_mirror_client(args)
+    listener_client = await create_listener_client(args)
+    sender_client = await create_sender_bot_client()
     try:
-        source_entity = await resolve_entity(client, args.source)
-        target_entity = await resolve_entity(client, args.target)
+        source_entity = await resolve_entity(listener_client, args.source)
+        target_entity = await resolve_entity(sender_client, args.target)
 
         source_title = getattr(source_entity, "title", None) or getattr(source_entity, "username", None) or args.source
         target_title = getattr(target_entity, "title", None) or getattr(target_entity, "username", None) or args.target
-        log_line("mirror_started", source=source_title, target=target_title, auth_mode=auth_mode)
+        log_line(
+            "mirror_started",
+            source=source_title,
+            target=target_title,
+            listener_session=str(resolve_listener_session_path(args)),
+            sender_mode="bot",
+        )
 
-        @client.on(events.NewMessage(chats=source_entity))
+        @listener_client.on(events.NewMessage(chats=source_entity))
         async def on_new_message(event: Any) -> None:
             message = event.message
             try:
-                sent = await mirror_message(client, target_entity, message)
+                sent = await mirror_message(sender_client, target_entity, message)
                 if sent is None:
                     log_line(
                         "message_skipped",
@@ -107,7 +134,8 @@ async def run_mirror(args: argparse.Namespace) -> int:
                     error=str(exc) or exc.__class__.__name__,
                 )
 
-        await client.run_until_disconnected()
+        await listener_client.run_until_disconnected()
         return 0
     finally:
-        await client.disconnect()
+        await listener_client.disconnect()
+        await sender_client.disconnect()
