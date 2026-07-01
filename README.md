@@ -102,9 +102,9 @@ python bot.py login
 这条命令会：
 
 - 读取 `.env` 里的 `LISTENER_SESSION`
-- 读取 `LISTENER_PHONE`
+- 优先读取 `LISTENER_PHONE`
 - 优先使用 `LISTENER_CODE` / `LISTENER_PASSWORD`
-- 如果没填验证码或两步密码，且当前终端可交互，会直接提示输入
+- 如果当前终端可交互，缺少时会依次提示输入手机号、验证码、两步密码
 
 登录成功后，会生成 `LISTENER_SESSION` 对应的 `.session` 文件，后续 `mirror` 直接复用。
 

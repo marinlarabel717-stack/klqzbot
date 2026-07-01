@@ -10,7 +10,12 @@ from pathlib import Path
 from typing import Any
 
 from telethon import TelegramClient, events
-from telethon.errors import PhoneCodeExpiredError, PhoneCodeInvalidError, SessionPasswordNeededError
+from telethon.errors import (
+    PhoneCodeExpiredError,
+    PhoneCodeInvalidError,
+    SendCodeUnavailableError,
+    SessionPasswordNeededError,
+)
 
 from .config import Settings, load_settings
 from .telegram_utils import build_url_buttons, infer_media_file, parse_button_lines, resolve_entity
@@ -63,7 +68,7 @@ def resolve_listener_session_path(
     candidates = sorted(session_dir.glob("*.session"))
     if candidates:
         return candidates[0]
-    if allow_missing and resolve_listener_phone(args, settings):
+    if allow_missing:
         return (session_dir / "listener.session").resolve()
     raise FileNotFoundError(f"未找到可用 session，请把 .session 文件放到目录: {session_dir}")
 
@@ -76,6 +81,14 @@ def reset_sender_session(session_path: Path) -> None:
 
 def can_prompt() -> bool:
     return bool(getattr(sys.stdin, "isatty", lambda: False)())
+
+
+def prompt_required(label: str, *, secret: bool = False) -> str:
+    while True:
+        value = (getpass(label) if secret else input(label)).strip()
+        if value:
+            return value
+        print("输入不能为空，请重新输入。", flush=True)
 
 
 @dataclass(slots=True)
@@ -135,12 +148,21 @@ async def authorize_listener_client(
 ) -> None:
     phone = resolve_listener_phone(args, settings)
     if not phone:
-        raise RuntimeError(
-            "未找到可用的监听账号 session，且未配置 LISTENER_PHONE。"
-            " 请在 .env 中设置 LISTENER_PHONE，或先执行 python bot.py login 生成 session。"
-        )
+        if not can_prompt():
+            raise RuntimeError(
+                "未找到可用的监听账号 session，且未配置 LISTENER_PHONE。"
+                " 请在 .env 中设置 LISTENER_PHONE，或先执行 python bot.py login 生成 session。"
+            )
+        phone = prompt_required("请输入监听账号手机号: ")
 
-    sent_code = await client.send_code_request(phone)
+    try:
+        sent_code = await client.send_code_request(phone)
+    except SendCodeUnavailableError as exc:
+        raise RuntimeError(
+            "这个号码当前可用的验证码发送方式已经用完了。"
+            " 请稍后再试，或者先在 Telegram 官方客户端完成一次登录。"
+        ) from exc
+
     code = resolve_listener_code(args, settings)
     if not code:
         if not can_prompt():
@@ -148,7 +170,7 @@ async def authorize_listener_client(
                 "LISTENER_CODE 未配置，当前也不是可交互终端。"
                 " 请在 .env 里设置 LISTENER_CODE 后重试，或先在可交互环境执行 python bot.py login。"
             )
-        code = input("请输入监听账号的短信/接码验证码: ").strip()
+        code = prompt_required("请输入监听账号的短信/接码验证码: ")
 
     try:
         await client.sign_in(phone=phone, code=code, phone_code_hash=sent_code.phone_code_hash)
@@ -161,7 +183,7 @@ async def authorize_listener_client(
         if not password:
             if not can_prompt():
                 raise RuntimeError("该监听账号开启了两步验证，请在 .env 里设置 LISTENER_PASSWORD 后重试。") from None
-            password = getpass("请输入监听账号的两步验证密码: ").strip()
+            password = prompt_required("请输入监听账号的两步验证密码: ", secret=True)
         await client.sign_in(password=password)
 
     if not await client.is_user_authorized():
