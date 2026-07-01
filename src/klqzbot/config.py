@@ -17,6 +17,20 @@ class Settings:
     listener_phone: str
     listener_code: str
     listener_password: str
+    button_admin_ids: frozenset[int]
+
+
+def parse_int_set(raw: str) -> frozenset[int]:
+    values: set[int] = set()
+    for part in str(raw or "").replace("\n", ",").split(","):
+        item = part.strip()
+        if not item:
+            continue
+        try:
+            values.add(int(item))
+        except ValueError as exc:
+            raise ValueError(f"BUTTON_ADMIN_IDS contains invalid user id: {item}") from exc
+    return frozenset(values)
 
 
 def load_settings() -> Settings:
@@ -30,6 +44,7 @@ def load_settings() -> Settings:
     listener_phone = os.getenv("LISTENER_PHONE", "").strip()
     listener_code = os.getenv("LISTENER_CODE", "").strip()
     listener_password = os.getenv("LISTENER_PASSWORD", "").strip()
+    button_admin_ids = parse_int_set(os.getenv("BUTTON_ADMIN_IDS", ""))
     try:
         api_id = int(api_id_raw)
     except ValueError as exc:
@@ -46,4 +61,5 @@ def load_settings() -> Settings:
         listener_phone=listener_phone,
         listener_code=listener_code,
         listener_password=listener_password,
+        button_admin_ids=button_admin_ids,
     )

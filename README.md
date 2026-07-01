@@ -17,7 +17,7 @@
 - 自动从 `./session` 目录发现 `.session` 文件
 - 支持监听账号从 `.env` 的手机号/验证码初始化 session
 - A 群 / B 群引用可直接写在 `.env`
-- 仅允许 A 群管理员在消息里声明跳转按钮
+- 仅允许 `.env` 白名单账号在消息里声明跳转按钮
 
 ## 环境要求
 
@@ -56,6 +56,7 @@ LISTENER_SESSION=session/listener.session
 LISTENER_PHONE=+8613800000000
 LISTENER_CODE=
 LISTENER_PASSWORD=
+BUTTON_ADMIN_IDS=123456789,987654321
 ```
 
 说明：
@@ -66,6 +67,7 @@ LISTENER_PASSWORD=
 - `LISTENER_PHONE`：监听账号手机号
 - `LISTENER_CODE`：第一次登录时的短信/接码验证码，登录成功后可清空
 - `LISTENER_PASSWORD`：监听账号若开启两步验证，在这里填写密码
+- `BUTTON_ADMIN_IDS`：允许配置跳转按钮的 Telegram 用户 ID，多个用英文逗号分隔
 - 群引用支持 `@username`、`https://t.me/...`、`https://t.me/+inviteHash`
 
 ## 监听 session
@@ -127,7 +129,7 @@ python bot.py mirror
 
 现在不再复制 A 群原消息自带的按钮。
 
-只有 A 群管理员发的消息，才会被解析按钮声明；普通成员发同样格式，也只会按普通文本转发。
+只有 `BUTTON_ADMIN_IDS` 里配置过的账号发的消息，才会被解析按钮声明；其他成员发同样格式，也只会按普通文本转发。
 
 格式是一行一个按钮：
 

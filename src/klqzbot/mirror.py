@@ -161,30 +161,18 @@ async def create_sender_bot_client() -> TelegramClient:
 
 
 async def mirror_message(
-    listener_client: TelegramClient,
     sender_client: TelegramClient,
-    source_entity: Any,
     target_entity: Any,
     message: Any,
     *,
-    admin_cache: dict[int, bool],
+    button_admin_ids: frozenset[int],
 ) -> Any:
     if getattr(message, "action", None) is not None:
         return None
 
     sender_id = getattr(message, "sender_id", None)
-    allow_buttons = False
     original_text = str(getattr(message, "message", None) or "")
-    if sender_id is not None:
-        cached = admin_cache.get(int(sender_id))
-        if cached is None:
-            try:
-                permissions = await listener_client.get_permissions(source_entity, sender_id)
-                cached = bool(getattr(permissions, "is_admin", False) or getattr(permissions, "is_creator", False))
-            except Exception:
-                cached = False
-            admin_cache[int(sender_id)] = cached
-        allow_buttons = cached
+    allow_buttons = sender_id is not None and int(sender_id) in button_admin_ids
 
     text, buttons = extract_configured_buttons(
         original_text,
@@ -238,20 +226,18 @@ async def run_mirror(args: argparse.Namespace) -> int:
             target=target_title,
             listener_session=str(listener_session),
             sender_mode="bot",
+            button_admin_ids=sorted(settings.button_admin_ids),
         )
-        admin_cache: dict[int, bool] = {}
 
         @listener_client.on(events.NewMessage(chats=source_entity))
         async def on_new_message(event: Any) -> None:
             message = event.message
             try:
                 sent = await mirror_message(
-                    listener_client,
                     sender_client,
-                    source_entity,
                     target_entity,
                     message,
-                    admin_cache=admin_cache,
+                    button_admin_ids=settings.button_admin_ids,
                 )
                 if sent is None:
                     log_line(
