@@ -15,6 +15,17 @@ def log_line(event: str, **payload: Any) -> None:
     print(json.dumps({"event": event, **payload}, ensure_ascii=False), flush=True)
 
 
+def resolve_chat_refs(args: argparse.Namespace) -> tuple[str, str]:
+    settings = load_settings()
+    source = str(getattr(args, "source", "") or settings.source_chat or "").strip()
+    target = str(getattr(args, "target", "") or settings.target_chat or "").strip()
+    if not source:
+        raise RuntimeError("未提供源群；请传 --source 或在 .env 里配置 SOURCE_CHAT")
+    if not target:
+        raise RuntimeError("未提供目标群；请传 --target 或在 .env 里配置 TARGET_CHAT")
+    return source, target
+
+
 def resolve_listener_session_path(args: argparse.Namespace) -> Path:
     session_raw = str(getattr(args, "session", "") or "").strip()
     if session_raw:
@@ -97,11 +108,12 @@ async def run_mirror(args: argparse.Namespace) -> int:
     listener_client = await create_listener_client(args)
     sender_client = await create_sender_bot_client()
     try:
-        source_entity = await resolve_entity(listener_client, args.source)
-        target_entity = await resolve_entity(sender_client, args.target)
+        source_ref, target_ref = resolve_chat_refs(args)
+        source_entity = await resolve_entity(listener_client, source_ref)
+        target_entity = await resolve_entity(sender_client, target_ref)
 
-        source_title = getattr(source_entity, "title", None) or getattr(source_entity, "username", None) or args.source
-        target_title = getattr(target_entity, "title", None) or getattr(target_entity, "username", None) or args.target
+        source_title = getattr(source_entity, "title", None) or getattr(source_entity, "username", None) or source_ref
+        target_title = getattr(target_entity, "title", None) or getattr(target_entity, "username", None) or target_ref
         log_line(
             "mirror_started",
             source=source_title,

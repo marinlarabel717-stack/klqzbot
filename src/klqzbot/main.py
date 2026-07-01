@@ -32,8 +32,8 @@ def build_parser() -> argparse.ArgumentParser:
     mirror_parser = subparsers.add_parser("mirror", help="session 监听 A 群，bot 同步发送到 B 群")
     mirror_parser.add_argument("--session", help="监听账号的 .session 文件路径")
     mirror_parser.add_argument("--session-dir", default="session", help="自动查找 .session 的目录，默认是 ./session")
-    mirror_parser.add_argument("--source", required=True, help="源群引用")
-    mirror_parser.add_argument("--target", required=True, help="目标群引用")
+    mirror_parser.add_argument("--source", help="源群引用；不填则读取 .env 的 SOURCE_CHAT")
+    mirror_parser.add_argument("--target", help="目标群引用；不填则读取 .env 的 TARGET_CHAT")
     return parser
 
 
