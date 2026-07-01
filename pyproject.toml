@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "klqzbot"
 version = "0.1.0"
-description = "Telegram group clone bot"
+description = "Telegram message mirror tool"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

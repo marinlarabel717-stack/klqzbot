@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import re
 from pathlib import Path
 from typing import Any
 
@@ -12,11 +11,13 @@ from telethon.errors import FloodWaitError, UserAlreadyParticipantError, UserPri
 from telethon.tl import functions, types
 
 from .config import load_settings
+from .mirror import run_mirror
 from .models import CloneStats
+from .telegram_utils import resolve_entity
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="klqzbot", description="Telegram 群组克隆工具")
+    parser = argparse.ArgumentParser(prog="klqzbot", description="Telegram 群组工具")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     clone_parser = subparsers.add_parser("clone", help="采集源群成员并邀请进目标群")
@@ -27,38 +28,12 @@ def build_parser() -> argparse.ArgumentParser:
     clone_parser.add_argument("--interval", type=float, default=45.0, help="每次邀请间隔秒数")
     clone_parser.add_argument("--dry-run", action="store_true", help="只采集不邀请")
     clone_parser.add_argument("--include-bots", action="store_true", help="默认跳过 bot，开启后包含 bot")
+
+    mirror_parser = subparsers.add_parser("mirror", help="实时同步 A 群消息到 B 群")
+    mirror_parser.add_argument("--session", required=True, help="Telethon session 文件路径")
+    mirror_parser.add_argument("--source", required=True, help="源群引用")
+    mirror_parser.add_argument("--target", required=True, help="目标群引用")
     return parser
-
-
-def extract_invite_hash(raw: str) -> str:
-    matched = re.search(r"(?:https?://)?t\\.me/(?:joinchat/|\\+)([^/?#]+)", raw, re.I)
-    return matched.group(1).strip() if matched else ""
-
-
-def normalize_public_ref(raw: str) -> str:
-    value = raw.strip()
-    if not value:
-        return ""
-    if value.startswith("@"):
-        return value
-    public_matched = re.search(r"(?:https?://)?t\\.me/([A-Za-z0-9_]{3,})", value, re.I)
-    if public_matched:
-        return f"@{public_matched.group(1).strip()}"
-    return value
-
-
-async def resolve_entity(client: TelegramClient, raw: str) -> Any:
-    invite_hash = extract_invite_hash(raw)
-    if invite_hash:
-        invite = await client(functions.messages.CheckChatInviteRequest(hash=invite_hash))
-        if isinstance(invite, types.ChatInviteAlready):
-            return invite.chat
-        imported = await client(functions.messages.ImportChatInviteRequest(hash=invite_hash))
-        chats = list(getattr(imported, "chats", None) or [])
-        if chats:
-            return chats[0]
-        raise RuntimeError(f"无法加入/解析邀请链接: {raw}")
-    return await client.get_entity(normalize_public_ref(raw))
 
 
 def can_invite_user(user: types.User, include_bots: bool) -> bool:
@@ -186,6 +161,8 @@ async def async_main(args: argparse.Namespace) -> int:
         result = await run_clone(args)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
+    if args.command == "mirror":
+        return await run_mirror(args)
     raise RuntimeError(f"未知命令: {args.command}")
 
 
