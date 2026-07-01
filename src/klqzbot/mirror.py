@@ -3,12 +3,15 @@ from __future__ import annotations
 import argparse
 import json
 import sqlite3
+import sys
+from getpass import getpass
 from pathlib import Path
 from typing import Any
 
 from telethon import TelegramClient, events
+from telethon.errors import PhoneCodeExpiredError, PhoneCodeInvalidError, SessionPasswordNeededError
 
-from .config import load_settings
+from .config import Settings, load_settings
 from .telegram_utils import clone_buttons, infer_media_file, resolve_entity
 
 
@@ -27,21 +30,41 @@ def resolve_chat_refs(args: argparse.Namespace) -> tuple[str, str]:
     return source, target
 
 
-def resolve_listener_session_path(args: argparse.Namespace) -> Path:
-    session_raw = str(getattr(args, "session", "") or "").strip()
+def resolve_listener_phone(args: argparse.Namespace, settings: Settings) -> str:
+    return str(getattr(args, "phone", "") or settings.listener_phone or "").strip()
+
+
+def resolve_listener_code(args: argparse.Namespace, settings: Settings) -> str:
+    return str(getattr(args, "code", "") or settings.listener_code or "").strip()
+
+
+def resolve_listener_password(args: argparse.Namespace, settings: Settings) -> str:
+    return str(getattr(args, "password", "") or settings.listener_password or "").strip()
+
+
+def resolve_listener_session_path(
+    args: argparse.Namespace,
+    settings: Settings,
+    *,
+    allow_missing: bool = False,
+) -> Path:
+    session_raw = str(getattr(args, "session", "") or settings.listener_session or "").strip()
     if session_raw:
         session_path = Path(session_raw).expanduser().resolve()
-        if not session_path.exists():
-            raise FileNotFoundError(f"session 文件不存在: {session_path}")
-        return session_path
+        session_path.parent.mkdir(parents=True, exist_ok=True)
+        if allow_missing or session_path.exists():
+            return session_path
+        raise FileNotFoundError(f"session 文件不存在: {session_path}")
 
     session_dir_raw = str(getattr(args, "session_dir", "") or "session").strip() or "session"
     session_dir = Path(session_dir_raw).expanduser().resolve()
     session_dir.mkdir(parents=True, exist_ok=True)
     candidates = sorted(session_dir.glob("*.session"))
-    if not candidates:
-        raise FileNotFoundError(f"未找到可用 session，请把 .session 文件放到目录: {session_dir}")
-    return candidates[0]
+    if candidates:
+        return candidates[0]
+    if allow_missing and resolve_listener_phone(args, settings):
+        return (session_dir / "listener.session").resolve()
+    raise FileNotFoundError(f"未找到可用 session，请把 .session 文件放到目录: {session_dir}")
 
 
 def reset_sender_session(session_path: Path) -> None:
@@ -50,9 +73,54 @@ def reset_sender_session(session_path: Path) -> None:
             candidate.unlink(missing_ok=True)
 
 
+def can_prompt() -> bool:
+    return bool(getattr(sys.stdin, "isatty", lambda: False)())
+
+
+async def authorize_listener_client(
+    client: TelegramClient,
+    args: argparse.Namespace,
+    settings: Settings,
+    session_path: Path,
+) -> None:
+    phone = resolve_listener_phone(args, settings)
+    if not phone:
+        raise RuntimeError(
+            "未找到可用的监听账号 session，且未配置 LISTENER_PHONE。"
+            " 请在 .env 中设置 LISTENER_PHONE，或先执行 python bot.py login 生成 session。"
+        )
+
+    sent_code = await client.send_code_request(phone)
+    code = resolve_listener_code(args, settings)
+    if not code:
+        if not can_prompt():
+            raise RuntimeError(
+                "LISTENER_CODE 未配置，当前也不是可交互终端。"
+                " 请在 .env 里设置 LISTENER_CODE 后重试，或先在可交互环境执行 python bot.py login。"
+            )
+        code = input("请输入监听账号的短信/接码验证码: ").strip()
+
+    try:
+        await client.sign_in(phone=phone, code=code, phone_code_hash=sent_code.phone_code_hash)
+    except PhoneCodeInvalidError as exc:
+        raise RuntimeError("LISTENER_CODE 错误，请检查验证码后重试。") from exc
+    except PhoneCodeExpiredError as exc:
+        raise RuntimeError("LISTENER_CODE 已过期，请重新获取验证码后重试。") from exc
+    except SessionPasswordNeededError:
+        password = resolve_listener_password(args, settings)
+        if not password:
+            if not can_prompt():
+                raise RuntimeError("该监听账号开启了两步验证，请在 .env 里设置 LISTENER_PASSWORD 后重试。") from None
+            password = getpass("请输入监听账号的两步验证密码: ").strip()
+        await client.sign_in(password=password)
+
+    if not await client.is_user_authorized():
+        raise RuntimeError(f"监听账号登录失败: {session_path}")
+
+
 async def create_listener_client(args: argparse.Namespace) -> TelegramClient:
     settings = load_settings()
-    session_path = resolve_listener_session_path(args)
+    session_path = resolve_listener_session_path(args, settings, allow_missing=True)
     client = TelegramClient(str(session_path), settings.api_id, settings.api_hash)
     try:
         await client.connect()
@@ -65,7 +133,7 @@ async def create_listener_client(args: argparse.Namespace) -> TelegramClient:
             ) from exc
         raise
     if not await client.is_user_authorized():
-        raise RuntimeError(f"监听账号 session 未授权: {session_path}")
+        await authorize_listener_client(client, args, settings, session_path)
     return client
 
 
@@ -88,9 +156,7 @@ async def create_sender_bot_client() -> TelegramClient:
     await client.start(bot_token=bot_token)
     me = await client.get_me()
     if me is None or not getattr(me, "bot", False):
-        raise RuntimeError(
-            "发送端没有成功登录成 bot；请删除 data/sender-bot.session 后重试，并确认 .env 里的 BOT_TOKEN 正确。"
-        )
+        raise RuntimeError("发送端没有成功登录成 bot；请删除 data/sender-bot.session 后重试，并确认 .env 里的 BOT_TOKEN 正确。")
     return client
 
 
@@ -133,12 +199,14 @@ async def mirror_message(
 
 
 async def run_mirror(args: argparse.Namespace) -> int:
+    settings = load_settings()
     listener_client = await create_listener_client(args)
     sender_client = await create_sender_bot_client()
     try:
         source_ref, target_ref = resolve_chat_refs(args)
         source_entity = await resolve_entity(listener_client, source_ref)
         target_entity = await resolve_entity(sender_client, target_ref)
+        listener_session = resolve_listener_session_path(args, settings, allow_missing=True)
 
         source_title = getattr(source_entity, "title", None) or getattr(source_entity, "username", None) or source_ref
         target_title = getattr(target_entity, "title", None) or getattr(target_entity, "username", None) or target_ref
@@ -146,7 +214,7 @@ async def run_mirror(args: argparse.Namespace) -> int:
             "mirror_started",
             source=source_title,
             target=target_title,
-            listener_session=str(resolve_listener_session_path(args)),
+            listener_session=str(listener_session),
             sender_mode="bot",
         )
 
@@ -179,3 +247,25 @@ async def run_mirror(args: argparse.Namespace) -> int:
     finally:
         await listener_client.disconnect()
         await sender_client.disconnect()
+
+
+async def login_listener_session(args: argparse.Namespace) -> dict[str, Any]:
+    settings = load_settings()
+    client = await create_listener_client(args)
+    try:
+        me = await client.get_me()
+        session_path = resolve_listener_session_path(args, settings, allow_missing=True)
+        return {
+            "ok": True,
+            "session": str(session_path),
+            "user_id": getattr(me, "id", None),
+            "phone": getattr(me, "phone", None),
+            "username": getattr(me, "username", None),
+            "display_name": " ".join(
+                part
+                for part in [getattr(me, "first_name", "") or "", getattr(me, "last_name", "") or ""]
+                if part
+            ).strip(),
+        }
+    finally:
+        await client.disconnect()

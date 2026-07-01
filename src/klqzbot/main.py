@@ -11,7 +11,7 @@ from telethon.errors import FloodWaitError, UserAlreadyParticipantError, UserPri
 from telethon.tl import functions, types
 
 from .config import load_settings
-from .mirror import run_mirror
+from .mirror import login_listener_session, run_mirror
 from .models import CloneStats
 from .telegram_utils import resolve_entity
 
@@ -29,11 +29,21 @@ def build_parser() -> argparse.ArgumentParser:
     clone_parser.add_argument("--dry-run", action="store_true", help="只采集不邀请")
     clone_parser.add_argument("--include-bots", action="store_true", help="默认跳过 bot，开启后包含 bot")
 
-    mirror_parser = subparsers.add_parser("mirror", help="session 监听 A 群，bot 同步发送到 B 群")
+    mirror_parser = subparsers.add_parser("mirror", help="监听 A 群并用 bot 重发到 B 群")
     mirror_parser.add_argument("--session", help="监听账号的 .session 文件路径")
     mirror_parser.add_argument("--session-dir", default="session", help="自动查找 .session 的目录，默认是 ./session")
     mirror_parser.add_argument("--source", help="源群引用；不填则读取 .env 的 SOURCE_CHAT")
     mirror_parser.add_argument("--target", help="目标群引用；不填则读取 .env 的 TARGET_CHAT")
+    mirror_parser.add_argument("--phone", help="监听账号手机号；不填则读取 .env 的 LISTENER_PHONE")
+    mirror_parser.add_argument("--code", help="监听账号短信/接码验证码；不填则读取 .env 的 LISTENER_CODE")
+    mirror_parser.add_argument("--password", help="监听账号两步验证密码；不填则读取 .env 的 LISTENER_PASSWORD")
+
+    login_parser = subparsers.add_parser("login", help="手机号登录监听账号并生成 .session")
+    login_parser.add_argument("--session", help="监听账号 .session 写入路径；不填则读取 .env 的 LISTENER_SESSION")
+    login_parser.add_argument("--session-dir", default="session", help="未指定 --session 时默认写入的目录")
+    login_parser.add_argument("--phone", help="监听账号手机号；不填则读取 .env 的 LISTENER_PHONE")
+    login_parser.add_argument("--code", help="短信/接码验证码；不填则读取 .env 的 LISTENER_CODE 或交互输入")
+    login_parser.add_argument("--password", help="两步验证密码；不填则读取 .env 的 LISTENER_PASSWORD 或交互输入")
     return parser
 
 
@@ -160,6 +170,10 @@ async def run_clone(args: argparse.Namespace) -> dict[str, Any]:
 async def async_main(args: argparse.Namespace) -> int:
     if args.command == "clone":
         result = await run_clone(args)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "login":
+        result = await login_listener_session(args)
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
     if args.command == "mirror":

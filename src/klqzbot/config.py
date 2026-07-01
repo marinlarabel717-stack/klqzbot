@@ -13,6 +13,10 @@ class Settings:
     bot_token: str
     source_chat: str
     target_chat: str
+    listener_session: str
+    listener_phone: str
+    listener_code: str
+    listener_password: str
 
 
 def load_settings() -> Settings:
@@ -22,6 +26,10 @@ def load_settings() -> Settings:
     bot_token = os.getenv("BOT_TOKEN", "").strip()
     source_chat = os.getenv("SOURCE_CHAT", "").strip()
     target_chat = os.getenv("TARGET_CHAT", "").strip()
+    listener_session = os.getenv("LISTENER_SESSION", "").strip()
+    listener_phone = os.getenv("LISTENER_PHONE", "").strip()
+    listener_code = os.getenv("LISTENER_CODE", "").strip()
+    listener_password = os.getenv("LISTENER_PASSWORD", "").strip()
     try:
         api_id = int(api_id_raw)
     except ValueError as exc:
@@ -34,4 +42,8 @@ def load_settings() -> Settings:
         bot_token=bot_token,
         source_chat=source_chat,
         target_chat=target_chat,
+        listener_session=listener_session,
+        listener_phone=listener_phone,
+        listener_code=listener_code,
+        listener_password=listener_password,
     )

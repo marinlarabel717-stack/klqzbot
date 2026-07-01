@@ -4,7 +4,7 @@
 
 当前主架构是：
 
-1. 用 `session` 账号加入并监听 A 群
+1. 用监听账号加入并监听 A 群
 2. 用 `BOT_TOKEN` 对应的机器人把消息发送到 B 群
 3. 通过“重发”而不是“转发”来隐藏来源
 
@@ -15,12 +15,13 @@
 - 用机器人身份发送到 B 群
 - 不显示转发来源
 - 自动从 `./session` 目录发现 `.session` 文件
+- 支持监听账号从 `.env` 的手机号/验证码初始化 session
 - A 群 / B 群引用可直接写在 `.env`
 
 ## 环境要求
 
 - Python 3.12+
-- 一个已授权的 Telegram 用户号 `.session`
+- 一个可用于监听 A 群的 Telegram 用户号
 - 一个可发消息到 B 群的 bot
 - `API_ID` / `API_HASH` / `BOT_TOKEN`
 
@@ -34,7 +35,7 @@ python -m venv .venv
 pip install -e .
 ```
 
-如果你习惯传统脚本启动方式，现在仓库根目录也支持：
+如果你习惯传统脚本启动方式，仓库根目录也支持：
 
 ```bash
 python bot.py mirror
@@ -42,25 +43,35 @@ python bot.py mirror
 
 ## 环境变量
 
-通过 `.env` 配置：
+先把 `.env.example` 复制成 `.env`，再填值：
 
 ```env
 API_ID=2040
 API_HASH=b18441a1ff607e10a989891a5462e627
 BOT_TOKEN=123456:ABCDEF...
-SOURCE_CHAT=https://t.me/A群
-TARGET_CHAT=https://t.me/B群
+SOURCE_CHAT=https://t.me/source_group
+TARGET_CHAT=https://t.me/target_group
+LISTENER_SESSION=session/listener.session
+LISTENER_PHONE=+8613800000000
+LISTENER_CODE=
+LISTENER_PASSWORD=
 ```
 
 说明：
 
 - `SOURCE_CHAT`：A 群引用
 - `TARGET_CHAT`：B 群引用
-- 两个都支持 `@username`、`https://t.me/...`、`https://t.me/+inviteHash`
+- `LISTENER_SESSION`：监听账号本地 session 保存路径
+- `LISTENER_PHONE`：监听账号手机号
+- `LISTENER_CODE`：第一次登录时的短信/接码验证码，登录成功后可清空
+- `LISTENER_PASSWORD`：监听账号若开启两步验证，在这里填写密码
+- 群引用支持 `@username`、`https://t.me/...`、`https://t.me/+inviteHash`
 
-## session 目录
+## 监听 session
 
-把监听账号的 `.session` 文件放到项目根目录下的 `session/`：
+有两种用法。
+
+### 1. 直接放现成 `.session`
 
 ```text
 klqzbot/
@@ -74,14 +85,31 @@ klqzbot/
 也可以手动指定：
 
 ```bash
-klqzbot mirror --session "C:\path\to\my_listener.session"
+python bot.py mirror --session "C:\path\to\my_listener.session"
 ```
+
+### 2. 用手机号/接码初始化 session
+
+第一次可以先登录生成监听 session：
+
+```bash
+python bot.py login
+```
+
+这条命令会：
+
+- 读取 `.env` 里的 `LISTENER_SESSION`
+- 读取 `LISTENER_PHONE`
+- 优先使用 `LISTENER_CODE` / `LISTENER_PASSWORD`
+- 如果没填验证码或两步密码，且当前终端可交互，会直接提示输入
+
+登录成功后，会生成 `LISTENER_SESSION` 对应的 `.session` 文件，后续 `mirror` 直接复用。
 
 ## 用法
 
 ### 最简启动
 
-当 `.env` 已经配置好 `SOURCE_CHAT` / `TARGET_CHAT` 后：
+当 `.env` 已配置好 `SOURCE_CHAT` / `TARGET_CHAT` 后：
 
 ```bash
 python bot.py mirror
@@ -89,16 +117,17 @@ python bot.py mirror
 
 这条命令会：
 
-- 自动读取 `./session/*.session`
-- 用该 session 账号监听 A 群
+- 优先复用 `LISTENER_SESSION` 或 `./session/*.session`
+- 如果没有可用 session，会尝试用 `LISTENER_PHONE` 登录生成一个
+- 用该监听账号监控 A 群
 - 用 `.env` 里的 `BOT_TOKEN` 把消息发到 B 群
 
 ### 覆盖 `.env` 配置
 
 ```bash
 python bot.py mirror ^
-  --source "https://t.me/A群" ^
-  --target "https://t.me/B群"
+  --source "https://t.me/source_group" ^
+  --target "https://t.me/target_group"
 ```
 
 ### 指定 session 目录
@@ -108,11 +137,20 @@ python bot.py mirror ^
   --session-dir "C:\my-sessions"
 ```
 
+### 临时覆盖监听登录参数
+
+```bash
+python bot.py login ^
+  --phone "+8613800000000" ^
+  --code "12345"
+```
+
 ## 前提
 
 - 监听账号必须已经加入 A 群
 - bot 必须已经加入 B 群
 - bot 在 B 群里要有发消息权限
+- 如果使用 `LISTENER_CODE`，它是一次性验证码，登录成功后可以从 `.env` 删掉
 
 ## 还没做
 
