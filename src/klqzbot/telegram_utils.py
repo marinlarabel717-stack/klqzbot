@@ -56,6 +56,19 @@ def clone_buttons(message_buttons: Any) -> Any:
             if url:
                 cloned_row.append(Button.url(text, url))
                 continue
+            if isinstance(
+                native_button,
+                (
+                    types.KeyboardButtonUrl,
+                    types.KeyboardButtonWebView,
+                    types.KeyboardButtonSimpleWebView,
+                    types.KeyboardButtonUrlAuth,
+                ),
+            ):
+                native_url = str(getattr(native_button, "url", "") or "").strip()
+                if native_url:
+                    cloned_row.append(Button.url(text, native_url))
+                    continue
             if isinstance(native_button, types.KeyboardButtonSwitchInline):
                 cloned_row.append(
                     Button.switch_inline(
@@ -64,6 +77,17 @@ def clone_buttons(message_buttons: Any) -> Any:
                         same_peer=bool(getattr(native_button, "same_peer", False)),
                     )
                 )
+                continue
+            if isinstance(native_button, types.KeyboardButtonUserProfile):
+                user_id = getattr(native_button, "user_id", None)
+                if user_id is not None:
+                    cloned_row.append(Button.url(text, f"tg://user?id={user_id}"))
+                    continue
+            if isinstance(native_button, types.KeyboardButtonBuy):
+                cloned_row.append(Button.buy(text))
+                continue
+            if isinstance(native_button, types.KeyboardButtonGame):
+                cloned_row.append(Button.game(text))
                 continue
             if data is not None:
                 cloned_row.append(Button.inline(text, data))
