@@ -12,7 +12,7 @@ from telethon import TelegramClient, events
 from telethon.errors import PhoneCodeExpiredError, PhoneCodeInvalidError, SessionPasswordNeededError
 
 from .config import Settings, load_settings
-from .telegram_utils import clone_buttons, infer_media_file, resolve_entity
+from .telegram_utils import extract_configured_buttons, infer_media_file, resolve_entity
 
 
 def log_line(event: str, **payload: Any) -> None:
@@ -161,16 +161,38 @@ async def create_sender_bot_client() -> TelegramClient:
 
 
 async def mirror_message(
+    listener_client: TelegramClient,
     sender_client: TelegramClient,
+    source_entity: Any,
     target_entity: Any,
     message: Any,
+    *,
+    admin_cache: dict[int, bool],
 ) -> Any:
     if getattr(message, "action", None) is not None:
         return None
 
-    buttons = clone_buttons(getattr(message, "buttons", None))
-    text = str(getattr(message, "message", None) or "")
+    sender_id = getattr(message, "sender_id", None)
+    allow_buttons = False
+    original_text = str(getattr(message, "message", None) or "")
+    if sender_id is not None:
+        cached = admin_cache.get(int(sender_id))
+        if cached is None:
+            try:
+                permissions = await listener_client.get_permissions(source_entity, sender_id)
+                cached = bool(getattr(permissions, "is_admin", False) or getattr(permissions, "is_creator", False))
+            except Exception:
+                cached = False
+            admin_cache[int(sender_id)] = cached
+        allow_buttons = cached
+
+    text, buttons = extract_configured_buttons(
+        original_text,
+        enabled=allow_buttons,
+    )
     entities = getattr(message, "entities", None)
+    if text != original_text:
+        entities = None
     has_media = getattr(message, "media", None) is not None
 
     if has_media:
@@ -217,12 +239,20 @@ async def run_mirror(args: argparse.Namespace) -> int:
             listener_session=str(listener_session),
             sender_mode="bot",
         )
+        admin_cache: dict[int, bool] = {}
 
         @listener_client.on(events.NewMessage(chats=source_entity))
         async def on_new_message(event: Any) -> None:
             message = event.message
             try:
-                sent = await mirror_message(sender_client, target_entity, message)
+                sent = await mirror_message(
+                    listener_client,
+                    sender_client,
+                    source_entity,
+                    target_entity,
+                    message,
+                    admin_cache=admin_cache,
+                )
                 if sent is None:
                     log_line(
                         "message_skipped",

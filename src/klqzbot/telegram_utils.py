@@ -98,6 +98,34 @@ def clone_buttons(message_buttons: Any) -> Any:
     return cloned_rows or None
 
 
+def extract_configured_buttons(message_text: str, *, enabled: bool) -> tuple[str, Any]:
+    text = str(message_text or "")
+    if not text:
+        return "", None
+
+    body_lines: list[str] = []
+    button_rows: list[list[Any]] = []
+    saw_button_syntax = False
+
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        matched = re.match(r"^(?P<label>[^|｜]+?)\s*[|｜]\s*(?P<url>https?://\S+)$", line, re.I)
+        if matched:
+            saw_button_syntax = True
+            if enabled:
+                label = matched.group("label").strip() or "按钮"
+                url = matched.group("url").strip()
+                button_rows.append([Button.url(label, url)])
+                continue
+        body_lines.append(raw_line)
+
+    if not enabled or not saw_button_syntax:
+        return text, None
+
+    trimmed_body = "\n".join(body_lines).strip()
+    return trimmed_body, button_rows or None
+
+
 def infer_media_file(message: Any, media_bytes: bytes | None) -> BytesIO | None:
     if media_bytes is None:
         return None
