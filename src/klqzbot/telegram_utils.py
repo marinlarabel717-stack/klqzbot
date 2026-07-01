@@ -126,32 +126,47 @@ def extract_configured_buttons(message_text: str, *, enabled: bool) -> tuple[str
     return trimmed_body, button_rows or None
 
 
-def parse_button_lines(message_text: str) -> list[dict[str, str]]:
-    buttons: list[dict[str, str]] = []
+def parse_button_lines(message_text: str) -> list[list[dict[str, str]]]:
+    rows: list[list[dict[str, str]]] = []
     for raw_line in str(message_text or "").splitlines():
         line = raw_line.strip()
         if not line:
             continue
-        matched = re.match(r"^(?P<label>[^|｜]+?)\s*[|｜]\s*(?P<url>https?://\S+)$", line, re.I)
-        if not matched:
-            continue
-        buttons.append(
-            {
-                "text": matched.group("label").strip() or "按钮",
-                "url": matched.group("url").strip(),
-            }
-        )
-    return buttons
+        row: list[dict[str, str]] = []
+        for part in re.split(r"\s*&&\s*", line):
+            segment = part.strip()
+            if not segment:
+                continue
+            matched = re.match(r"^(?P<label>[^|｜]+?)\s*[|｜]\s*(?P<url>https?://\S+)$", segment, re.I)
+            if not matched:
+                row = []
+                break
+            row.append(
+                {
+                    "text": matched.group("label").strip() or "按钮",
+                    "url": matched.group("url").strip(),
+                }
+            )
+        if row:
+            rows.append(row)
+    return rows
 
 
-def build_url_buttons(button_specs: list[dict[str, str]]) -> Any:
+def build_url_buttons(button_specs: list[Any]) -> Any:
     rows: list[list[Any]] = []
-    for item in button_specs:
-        text = str(item.get("text", "") or "").strip()
-        url = str(item.get("url", "") or "").strip()
-        if not text or not url:
-            continue
-        rows.append([Button.url(text, url)])
+    for raw_row in button_specs:
+        items = raw_row if isinstance(raw_row, list) else [raw_row]
+        row: list[Any] = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            text = str(item.get("text", "") or "").strip()
+            url = str(item.get("url", "") or "").strip()
+            if not text or not url:
+                continue
+            row.append(Button.url(text, url))
+        if row:
+            rows.append(row)
     return rows or None
 
 

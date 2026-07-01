@@ -94,7 +94,7 @@ def prompt_required(label: str, *, secret: bool = False) -> str:
 @dataclass(slots=True)
 class ButtonConfigStore:
     path: Path
-    button_specs: list[dict[str, str]] = field(default_factory=list)
+    button_specs: list[list[dict[str, str]]] = field(default_factory=list)
 
     def load(self) -> None:
         if not self.path.exists():
@@ -106,23 +106,34 @@ class ButtonConfigStore:
             self.button_specs = []
             return
         items = payload.get("buttons", []) if isinstance(payload, dict) else []
-        normalized: list[dict[str, str]] = []
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            text = str(item.get("text", "") or "").strip()
-            url = str(item.get("url", "") or "").strip()
-            if text and url:
-                normalized.append({"text": text, "url": url})
+        normalized: list[list[dict[str, str]]] = []
+        for raw_row in items:
+            row_items = raw_row if isinstance(raw_row, list) else [raw_row]
+            row: list[dict[str, str]] = []
+            for item in row_items:
+                if not isinstance(item, dict):
+                    continue
+                text = str(item.get("text", "") or "").strip()
+                url = str(item.get("url", "") or "").strip()
+                if text and url:
+                    row.append({"text": text, "url": url})
+            if row:
+                normalized.append(row)
         self.button_specs = normalized
 
-    def save(self, button_specs: list[dict[str, str]]) -> None:
+    def save(self, button_specs: list[list[dict[str, str]]]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.button_specs = [
-            {"text": str(item.get("text", "") or "").strip(), "url": str(item.get("url", "") or "").strip()}
-            for item in button_specs
-            if str(item.get("text", "") or "").strip() and str(item.get("url", "") or "").strip()
-        ]
+        normalized: list[list[dict[str, str]]] = []
+        for raw_row in button_specs:
+            row: list[dict[str, str]] = []
+            for item in raw_row:
+                text = str(item.get("text", "") or "").strip()
+                url = str(item.get("url", "") or "").strip()
+                if text and url:
+                    row.append({"text": text, "url": url})
+            if row:
+                normalized.append(row)
+        self.button_specs = normalized
         payload = {"buttons": self.button_specs}
         self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -137,7 +148,13 @@ class ButtonConfigStore:
     def render_text(self) -> str:
         if not self.button_specs:
             return "当前没有配置按钮。"
-        return "\n".join(f"{item['text']}｜{item['url']}" for item in self.button_specs)
+        return "\n".join(
+            " && ".join(f"{item['text']}｜{item['url']}" for item in row)
+            for row in self.button_specs
+        )
+
+    def count_buttons(self) -> int:
+        return sum(len(row) for row in self.button_specs)
 
 
 async def authorize_listener_client(
@@ -294,7 +311,8 @@ async def handle_admin_button_message(
         await event.reply(
             "按钮配置格式：\n"
             "按钮文字｜https://example.com\n"
-            "按钮文字2｜https://example.com/2\n\n"
+            "按钮文字2｜https://example.com/2\n"
+            "按钮A｜https://a.com && 按钮B｜https://b.com\n\n"
             "可用命令：\n"
             "/buttons 查看当前按钮\n"
             "/clearbuttons 清空当前按钮"
@@ -314,12 +332,13 @@ async def handle_admin_button_message(
     if not button_specs:
         await event.reply(
             "未识别到有效按钮格式。\n"
-            "请按一行一个发送：按钮文字｜https://example.com"
+            "请按这个格式发送：按钮文字｜https://example.com\n"
+            "同一行多个按钮可用 && 连接。"
         )
         return
 
     button_store.save(button_specs)
-    await event.reply(f"按钮已更新，共 {len(button_specs)} 个：\n{button_store.render_text()}")
+    await event.reply(f"按钮已更新，共 {button_store.count_buttons()} 个：\n{button_store.render_text()}")
 
 
 async def run_mirror(args: argparse.Namespace) -> int:
@@ -343,7 +362,7 @@ async def run_mirror(args: argparse.Namespace) -> int:
             listener_session=str(listener_session),
             sender_mode="bot",
             button_admin_ids=sorted(settings.button_admin_ids),
-            configured_button_count=len(button_store.button_specs),
+            configured_button_count=button_store.count_buttons(),
         )
 
         @sender_client.on(events.NewMessage(incoming=True))
