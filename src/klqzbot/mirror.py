@@ -638,6 +638,12 @@ async def handle_admin_button_message(
 
     sender_id = getattr(event, "sender_id", None)
     if sender_id is None or int(sender_id) not in settings.button_admin_ids:
+        log_line(
+            "admin_message_ignored",
+            sender_id=sender_id,
+            reason="not_in_button_admin_ids",
+            allowed_admin_ids=sorted(settings.button_admin_ids),
+        )
         return
 
     text = str(getattr(event, "raw_text", "") or "").strip()
@@ -797,6 +803,14 @@ async def run_mirror(args: argparse.Namespace) -> int:
     )
     try:
         status = await mirror_runtime.reload()
+        bot_me = await sender_client.get_me()
+        log_line(
+            "bot_ready",
+            bot_id=getattr(bot_me, "id", None),
+            bot_username=getattr(bot_me, "username", None),
+            allowed_admin_ids=sorted(settings.button_admin_ids),
+            mirror_status=status,
+        )
         log_line("mirror_boot", status=status)
 
         @sender_client.on(events.NewMessage(incoming=True))
