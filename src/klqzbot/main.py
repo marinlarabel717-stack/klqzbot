@@ -30,7 +30,8 @@ def build_parser() -> argparse.ArgumentParser:
     clone_parser.add_argument("--include-bots", action="store_true", help="默认跳过 bot，开启后包含 bot")
 
     mirror_parser = subparsers.add_parser("mirror", help="实时同步 A 群消息到 B 群")
-    mirror_parser.add_argument("--session", required=True, help="Telethon session 文件路径")
+    mirror_parser.add_argument("--session", help="Telethon session 文件路径；不用机器人模式时必填")
+    mirror_parser.add_argument("--bot-token", help="机器人 token；填写后将以机器人身份监听并发送")
     mirror_parser.add_argument("--source", required=True, help="源群引用")
     mirror_parser.add_argument("--target", required=True, help="目标群引用")
     return parser

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 from typing import Any
 
 from telethon import TelegramClient, events
@@ -12,6 +13,26 @@ from .telegram_utils import clone_buttons, infer_media_file, resolve_entity
 
 def log_line(event: str, **payload: Any) -> None:
     print(json.dumps({"event": event, **payload}, ensure_ascii=False), flush=True)
+
+
+async def create_mirror_client(args: argparse.Namespace) -> tuple[TelegramClient, str]:
+    settings = load_settings()
+    bot_token = str(getattr(args, "bot_token", "") or settings.bot_token or "").strip()
+    session_raw = str(getattr(args, "session", "") or "").strip()
+    session_path = Path(session_raw).expanduser().resolve() if session_raw else (Path.cwd() / "data" / "mirror-bot.session")
+    session_path.parent.mkdir(parents=True, exist_ok=True)
+
+    client = TelegramClient(str(session_path), settings.api_id, settings.api_hash)
+    if bot_token:
+        await client.start(bot_token=bot_token)
+        return client, "bot"
+
+    if not session_raw:
+        raise RuntimeError("未提供 --session，且 BOT_TOKEN 也未配置")
+    await client.connect()
+    if not await client.is_user_authorized():
+        raise RuntimeError("当前 session 未授权")
+    return client, "user"
 
 
 async def mirror_message(
@@ -53,19 +74,14 @@ async def mirror_message(
 
 
 async def run_mirror(args: argparse.Namespace) -> int:
-    settings = load_settings()
-    client = TelegramClient(str(args.session), settings.api_id, settings.api_hash)
-    await client.connect()
+    client, auth_mode = await create_mirror_client(args)
     try:
-        if not await client.is_user_authorized():
-            raise RuntimeError("当前 session 未授权")
-
         source_entity = await resolve_entity(client, args.source)
         target_entity = await resolve_entity(client, args.target)
 
         source_title = getattr(source_entity, "title", None) or getattr(source_entity, "username", None) or args.source
         target_title = getattr(target_entity, "title", None) or getattr(target_entity, "username", None) or args.target
-        log_line("mirror_started", source=source_title, target=target_title)
+        log_line("mirror_started", source=source_title, target=target_title, auth_mode=auth_mode)
 
         @client.on(events.NewMessage(chats=source_entity))
         async def on_new_message(event: Any) -> None:

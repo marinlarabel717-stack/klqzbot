@@ -39,11 +39,23 @@ pip install -e .
 ```env
 API_ID=2040
 API_HASH=b18441a1ff607e10a989891a5462e627
+BOT_TOKEN=123456:ABCDEF...
 ```
 
 ## 用法
 
 ### 实时同步消息
+
+机器人模式：
+
+```bash
+python -m klqzbot mirror ^
+  --bot-token "123456:ABCDEF..." ^
+  --source "https://t.me/A群" ^
+  --target "https://t.me/B群"
+```
+
+用户号 session 模式：
 
 ```bash
 python -m klqzbot mirror ^
@@ -53,6 +65,13 @@ python -m klqzbot mirror ^
 ```
 
 启动后会持续监听 A 群；只要 A 群有新消息，就会直接抓取并同步发送到 B 群。
+
+如果你走机器人模式，需要注意：
+
+- 这个 bot 必须同时在 A 群和 B 群里
+- B 群里要有发消息权限
+- A 群里要能收到消息更新
+通常做法是把 bot 拉进 A 群并关闭 BotFather 的隐私模式，或者给足管理员权限
 
 ### 旧的成员克隆骨架
 
