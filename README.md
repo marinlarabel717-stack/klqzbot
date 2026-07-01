@@ -15,8 +15,8 @@
 - 用机器人身份发送到 B 群
 - 不显示转发来源
 - 自动从 `./session` 目录发现 `.session` 文件
-- 支持监听账号从 `.env` 的手机号/验证码初始化 session
-- A 群 / B 群引用可直接写在 `.env`
+- 支持通过机器人私聊配置 A 群 / B 群 / 监听账号
+- 运行时配置会保存到本地 `data/runtime-config.json`
 - 仅允许 `.env` 白名单账号私聊机器人配置全局跳转按钮
 
 ## 环境要求
@@ -44,30 +44,21 @@ python bot.py mirror
 
 ## 环境变量
 
-先把 `.env.example` 复制成 `.env`，再填值：
+先把 `.env.example` 复制成 `.env`，至少保留这几个核心凭证：
 
 ```env
 API_ID=2040
 API_HASH=b18441a1ff607e10a989891a5462e627
 BOT_TOKEN=123456:ABCDEF...
-SOURCE_CHAT=https://t.me/source_group
-TARGET_CHAT=https://t.me/target_group
-LISTENER_SESSION=session/listener.session
-LISTENER_PHONE=+8613800000000
-LISTENER_CODE=
-LISTENER_PASSWORD=
 BUTTON_ADMIN_IDS=123456789,987654321
 ```
 
 说明：
 
-- `SOURCE_CHAT`：A 群引用
-- `TARGET_CHAT`：B 群引用
-- `LISTENER_SESSION`：监听账号本地 session 保存路径
-- `LISTENER_PHONE`：监听账号手机号
-- `LISTENER_CODE`：第一次登录时的短信/接码验证码，登录成功后可清空
-- `LISTENER_PASSWORD`：监听账号若开启两步验证，在这里填写密码
 - `BUTTON_ADMIN_IDS`：允许私聊机器人配置按钮的 Telegram 用户 ID，多个用英文逗号分隔
+- `SOURCE_CHAT` / `TARGET_CHAT` / `LISTENER_*` 现在都可以不填
+- 这些业务配置优先保存在本地 `data/runtime-config.json`
+- 优先级是：命令行参数 > `data/runtime-config.json` > `.env`
 - 群引用支持 `@username`、`https://t.me/...`、`https://t.me/+inviteHash`
 
 ## 监听 session
@@ -112,7 +103,7 @@ python bot.py login
 
 ### 最简启动
 
-当 `.env` 已配置好 `SOURCE_CHAT` / `TARGET_CHAT` 后：
+把机器人先跑起来：
 
 ```bash
 python bot.py mirror
@@ -120,10 +111,42 @@ python bot.py mirror
 
 这条命令会：
 
-- 优先复用 `LISTENER_SESSION` 或 `./session/*.session`
-- 如果没有可用 session，会尝试用 `LISTENER_PHONE` 登录生成一个
-- 用该监听账号监控 A 群
-- 用 `.env` 里的 `BOT_TOKEN` 把消息发到 B 群
+- 先启动机器人本身
+- 优先读取 `data/runtime-config.json` 里的 A 群 / B 群 / 监听配置
+- 如果监听账号已经登录成功，就开始同步 A 群到 B 群
+- 如果还没配完，机器人会先保持在线，等管理员私聊配置
+
+## 私聊机器人配置业务参数
+
+只有 `BUTTON_ADMIN_IDS` 里的管理员私聊机器人时才会有响应。
+
+先用这些命令配置：
+
+```text
+/source https://t.me/你的A群
+/target https://t.me/你的B群
+/listener_phone +8613800000000
+/sendcode
+/code 12345
+```
+
+如果监听号开了两步验证，再补：
+
+```text
+/listener_password 你的2FA密码
+```
+
+补充命令：
+
+- `/config`：查看当前 A/B 群、监听号、session、按钮、监听状态
+- `/listener_session D:\path\listener.session`：自定义监听 session 路径
+- `/sendcode +8613800000000`：发送验证码时顺手设置手机号
+
+说明：
+
+- A 群 / B 群 / 监听手机号 / 两步密码 / session 路径都会保存在 `data/runtime-config.json`
+- 验证码中间态会临时保存在 `data/login-code.json`
+- 登录成功后，监听 session 会保存到你配置的路径
 
 ## 私聊机器人配置按钮
 
@@ -148,8 +171,6 @@ python bot.py mirror
 例如管理员私聊机器人发送：
 
 ```text
-这是正文
-
 立即购买｜https://example.com/buy
 联系客服｜https://t.me/example_support
 ```
@@ -172,7 +193,7 @@ python bot.py mirror
 - 链接目前只接受 `http://` 或 `https://`
 - 每一行会生成一排按钮；不用 `&&` 时就是一行一个按钮
 
-### 覆盖 `.env` 配置
+### 覆盖运行时配置
 
 ```bash
 python bot.py mirror ^

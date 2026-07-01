@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -18,6 +19,60 @@ class Settings:
     listener_code: str
     listener_password: str
     button_admin_ids: frozenset[int]
+
+
+@dataclass(slots=True)
+class RuntimeConfig:
+    source_chat: str = ""
+    target_chat: str = ""
+    listener_session: str = ""
+    listener_phone: str = ""
+    listener_password: str = ""
+
+
+class RuntimeConfigStore:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def load(self) -> RuntimeConfig:
+        if not self.path.exists():
+            return RuntimeConfig()
+        try:
+            import json
+
+            payload = json.loads(self.path.read_text(encoding="utf-8"))
+        except Exception:
+            return RuntimeConfig()
+        if not isinstance(payload, dict):
+            return RuntimeConfig()
+        return RuntimeConfig(
+            source_chat=str(payload.get("source_chat", "") or "").strip(),
+            target_chat=str(payload.get("target_chat", "") or "").strip(),
+            listener_session=str(payload.get("listener_session", "") or "").strip(),
+            listener_phone=str(payload.get("listener_phone", "") or "").strip(),
+            listener_password=str(payload.get("listener_password", "") or "").strip(),
+        )
+
+    def save(self, config: RuntimeConfig) -> None:
+        import json
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "source_chat": config.source_chat,
+            "target_chat": config.target_chat,
+            "listener_session": config.listener_session,
+            "listener_phone": config.listener_phone,
+            "listener_password": config.listener_password,
+        }
+        self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def update(self, **changes: str) -> RuntimeConfig:
+        config = self.load()
+        for key, value in changes.items():
+            if hasattr(config, key):
+                setattr(config, key, str(value or "").strip())
+        self.save(config)
+        return config
 
 
 def parse_int_set(raw: str) -> frozenset[int]:
