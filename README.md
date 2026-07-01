@@ -34,6 +34,12 @@ python -m venv .venv
 pip install -e .
 ```
 
+如果你习惯传统脚本启动方式，现在仓库根目录也支持：
+
+```bash
+python bot.py mirror
+```
+
 ## 环境变量
 
 通过 `.env` 配置：
@@ -78,7 +84,7 @@ klqzbot mirror --session "C:\path\to\my_listener.session"
 当 `.env` 已经配置好 `SOURCE_CHAT` / `TARGET_CHAT` 后：
 
 ```bash
-klqzbot mirror
+python bot.py mirror
 ```
 
 这条命令会：
@@ -90,7 +96,7 @@ klqzbot mirror
 ### 覆盖 `.env` 配置
 
 ```bash
-klqzbot mirror ^
+python bot.py mirror ^
   --source "https://t.me/A群" ^
   --target "https://t.me/B群"
 ```
@@ -98,7 +104,7 @@ klqzbot mirror ^
 ### 指定 session 目录
 
 ```bash
-klqzbot mirror ^
+python bot.py mirror ^
   --session-dir "C:\my-sessions"
 ```
 
