@@ -44,6 +44,12 @@ def resolve_listener_session_path(args: argparse.Namespace) -> Path:
     return candidates[0]
 
 
+def reset_sender_session(session_path: Path) -> None:
+    for candidate in session_path.parent.glob(f"{session_path.name}*"):
+        if candidate.is_file():
+            candidate.unlink(missing_ok=True)
+
+
 async def create_listener_client(args: argparse.Namespace) -> TelegramClient:
     settings = load_settings()
     session_path = resolve_listener_session_path(args)
@@ -72,7 +78,19 @@ async def create_sender_bot_client() -> TelegramClient:
     session_path = (Path.cwd() / "data" / "sender-bot.session").resolve()
     session_path.parent.mkdir(parents=True, exist_ok=True)
     client = TelegramClient(str(session_path), settings.api_id, settings.api_hash)
+    await client.connect()
+    me = await client.get_me() if await client.is_user_authorized() else None
+    if me is not None and not getattr(me, "bot", False):
+        await client.disconnect()
+        reset_sender_session(session_path)
+        client = TelegramClient(str(session_path), settings.api_id, settings.api_hash)
+
     await client.start(bot_token=bot_token)
+    me = await client.get_me()
+    if me is None or not getattr(me, "bot", False):
+        raise RuntimeError(
+            "发送端没有成功登录成 bot；请删除 data/sender-bot.session 后重试，并确认 .env 里的 BOT_TOKEN 正确。"
+        )
     return client
 
 
