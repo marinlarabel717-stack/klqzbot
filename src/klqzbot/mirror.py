@@ -5,6 +5,7 @@ import argparse
 import json
 import sqlite3
 import sys
+from datetime import datetime, timezone
 from dataclasses import dataclass, field
 from getpass import getpass
 from pathlib import Path
@@ -277,6 +278,7 @@ class MirrorRuntime:
         self.listener_handler: Any = None
         self.listener_key: tuple[str, str, str] | None = None
         self.lock = asyncio.Lock()
+        self.active_mirror_tasks: set[asyncio.Task[Any]] = set()
 
     async def stop_listener(self) -> None:
         if self.listener_client is None:
@@ -289,6 +291,67 @@ class MirrorRuntime:
             self.listener_client = None
             self.listener_handler = None
             self.listener_key = None
+            for task in list(self.active_mirror_tasks):
+                task.cancel()
+            if self.active_mirror_tasks:
+                await asyncio.gather(*self.active_mirror_tasks, return_exceptions=True)
+            self.active_mirror_tasks.clear()
+
+    def _track_mirror_task(self, task: asyncio.Task[Any]) -> None:
+        self.active_mirror_tasks.add(task)
+
+        def _cleanup(done: asyncio.Task[Any]) -> None:
+            self.active_mirror_tasks.discard(done)
+
+        task.add_done_callback(_cleanup)
+
+    async def _mirror_one(self, target_entity: Any, message: Any) -> None:
+        received_at = datetime.now(timezone.utc)
+        source_date = getattr(message, "date", None)
+        source_delay_ms: int | None = None
+        if isinstance(source_date, datetime):
+            if source_date.tzinfo is None:
+                source_date = source_date.replace(tzinfo=timezone.utc)
+            source_delay_ms = max(0, int((received_at - source_date).total_seconds() * 1000))
+
+        started = received_at
+        try:
+            sent = await mirror_message(
+                self.sender_client,
+                target_entity,
+                message,
+                button_store=self.button_store,
+            )
+            elapsed_ms = max(0, int((datetime.now(timezone.utc) - started).total_seconds() * 1000))
+            if sent is None:
+                log_line(
+                    "message_skipped",
+                    source_message_id=getattr(message, "id", None),
+                    reason="empty_or_service",
+                    has_media=bool(getattr(message, "media", None)),
+                    source_delay_ms=source_delay_ms,
+                )
+                return
+            log_line(
+                "message_mirrored",
+                source_message_id=getattr(message, "id", None),
+                target_message_id=getattr(sent, "id", None),
+                has_media=bool(getattr(message, "media", None)),
+                source_delay_ms=source_delay_ms,
+                mirror_elapsed_ms=elapsed_ms,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            elapsed_ms = max(0, int((datetime.now(timezone.utc) - started).total_seconds() * 1000))
+            log_line(
+                "message_failed",
+                source_message_id=getattr(message, "id", None),
+                has_media=bool(getattr(message, "media", None)),
+                source_delay_ms=source_delay_ms,
+                mirror_elapsed_ms=elapsed_ms,
+                error=str(exc) or exc.__class__.__name__,
+            )
 
     async def reload(self) -> str:
         async with self.lock:
@@ -325,31 +388,8 @@ class MirrorRuntime:
 
             async def on_new_message(event: Any) -> None:
                 message = event.message
-                try:
-                    sent = await mirror_message(
-                        self.sender_client,
-                        target_entity,
-                        message,
-                        button_store=self.button_store,
-                    )
-                    if sent is None:
-                        log_line(
-                            "message_skipped",
-                            source_message_id=getattr(message, "id", None),
-                            reason="empty_or_service",
-                        )
-                        return
-                    log_line(
-                        "message_mirrored",
-                        source_message_id=getattr(message, "id", None),
-                        target_message_id=getattr(sent, "id", None),
-                    )
-                except Exception as exc:
-                    log_line(
-                        "message_failed",
-                        source_message_id=getattr(message, "id", None),
-                        error=str(exc) or exc.__class__.__name__,
-                    )
+                task = asyncio.create_task(self._mirror_one(target_entity, message))
+                self._track_mirror_task(task)
 
             listener_client.add_event_handler(on_new_message, events.NewMessage(chats=source_entity))
             self.listener_client = listener_client
