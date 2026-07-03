@@ -726,6 +726,15 @@ async def reply_listener_panel(
     )
 
 
+async def reply_listener_hint(
+    event: Any,
+    hint: str,
+    *,
+    buttons: Any = None,
+) -> None:
+    await event.reply(str(hint or "").strip(), buttons=buttons)
+
+
 async def send_listener_code(
     *,
     args: argparse.Namespace,
@@ -737,7 +746,7 @@ async def send_listener_code(
     runtime = runtime_store.load()
     phone = phone_override.strip() or runtime.listener_phone or settings.listener_phone
     if not phone:
-        return "请先发送 `/listener_phone 你的手机号`，或直接发 `/sendcode +8613...`。"
+        return "还没设置监听手机号。请先点【设置手机号】并发送手机号。"
     if phone_override.strip():
         runtime = runtime_store.update(listener_phone=phone_override.strip())
 
@@ -748,7 +757,7 @@ async def send_listener_code(
     try:
         if await client.is_user_authorized():
             me = await client.get_me()
-            return f"监听账号已登录：{getattr(me, 'phone', None) or getattr(me, 'username', None) or 'unknown'}"
+            return f"监听号已经登录：{getattr(me, 'phone', None) or getattr(me, 'username', None) or 'unknown'}"
         sent_code = await client.send_code_request(phone)
         code_store.save(
             LoginCodeState(
@@ -758,9 +767,9 @@ async def send_listener_code(
                 password_needed=False,
             )
         )
-        return "验证码已发送。请私聊机器人发送 `/code 12345` 完成登录。"
+        return "验证码已发送，请直接发送收到的验证码。"
     except SendCodeUnavailableError:
-        return "这个号码当前发码方式已用完了，请稍后再试，或先去 Telegram 官方客户端登录一次。"
+        return "这个号码当前暂时发不了验证码，请稍后再试，或先去 Telegram 官方客户端登录一次。"
     finally:
         await client.disconnect()
 
@@ -787,7 +796,7 @@ async def finish_listener_login_with_password(
         )
         code_store.clear()
         return (
-            "监听账号登录成功："
+            "监听号登录成功："
             f"{getattr(me, 'phone', None) or getattr(me, 'username', None) or getattr(me, 'id', 'unknown')}"
         )
     finally:
@@ -804,7 +813,7 @@ async def finish_listener_code_login(
 ) -> str:
     state = code_store.load()
     if not state.phone or not state.phone_code_hash or not state.session_path:
-        return "当前没有待完成的验证码登录。先发送 `/sendcode`。"
+        return "当前没有待完成的验证码流程。请先点【发送验证码】。"
 
     runtime = runtime_store.load()
     client = TelegramClient(state.session_path, settings.api_id, settings.api_hash)
@@ -825,21 +834,21 @@ async def finish_listener_code_login(
                         password_needed=True,
                     )
                 )
-                return "这个账号开启了两步验证。请发送 `/listener_password 你的密码` 完成登录。"
+                return "这个账号需要两步验证，请直接发送两步密码。"
         except PhoneCodeInvalidError:
-            return "验证码错误，请重新发送 `/code 12345`。"
+            return "验证码错误，请重新发送验证码。"
         except PhoneCodeExpiredError:
             code_store.clear()
-            return "验证码已过期，请重新发送 `/sendcode` 获取新验证码。"
+            return "验证码已过期，请重新点【发送验证码】获取新的验证码。"
         except PhoneCodeHashEmptyError:
             code_store.clear()
-            return "登录状态已失效，请重新发送 `/sendcode`。"
+            return "登录状态已失效，请重新点【发送验证码】。"
 
         me = await client.get_me()
         runtime_store.update(listener_phone=state.phone, listener_session=state.session_path)
         code_store.clear()
         return (
-            "监听账号登录成功："
+            "监听号登录成功："
             f"{getattr(me, 'phone', None) or getattr(me, 'username', None) or getattr(me, 'id', 'unknown')}"
         )
     finally:
@@ -1042,7 +1051,11 @@ async def apply_pending_admin_input(
     if pending == PENDING_LISTENER_PHONE:
         runtime_store.update(listener_phone=text)
         mirror_runtime.admin_state.clear(sender_id)
-        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=f"监听手机号已保存：{text}\n下一步点【发送验证码】即可。")
+        await reply_listener_hint(
+            event,
+            f"监听手机号已保存：{text}\n下一步请点【发送验证码】。",
+            buttons=[[Button.inline("发送验证码", MENU_LISTENER_SENDCODE)]],
+        )
         return True
 
     if pending == PENDING_LISTENER_CODE:
@@ -1054,8 +1067,8 @@ async def apply_pending_admin_input(
             runtime_store=runtime_store,
             code_store=code_store,
         )
-        status = await mirror_runtime.reload()
-        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=f"{result}\n{status}")
+        await mirror_runtime.reload()
+        await reply_listener_hint(event, result)
         return True
 
     if pending == PENDING_LISTENER_PASSWORD:
@@ -1069,17 +1082,17 @@ async def apply_pending_admin_input(
                 runtime_store=runtime_store,
                 code_store=code_store,
             )
-            status = await mirror_runtime.reload()
-            await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=f"{result}\n{status}")
+            await mirror_runtime.reload()
+            await reply_listener_hint(event, result)
             return True
-        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint="两步密码已保存。")
+        await reply_listener_hint(event, "两步密码已保存。")
         return True
 
     if pending == PENDING_LISTENER_SESSION:
         runtime_store.update(listener_session=text)
         mirror_runtime.admin_state.clear(sender_id)
         status = await mirror_runtime.reload()
-        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=f"监听 session 路径已保存：{text}\n{status}")
+        await reply_listener_hint(event, f"监听 session 路径已保存：{text}\n{status}")
         return True
 
     if pending == PENDING_BUTTONS:
@@ -1156,7 +1169,11 @@ async def handle_admin_callback(
             runtime_store=runtime_store,
             code_store=code_store,
         )
-        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=result)
+        await reply_listener_hint(
+            event,
+            result,
+            buttons=[[Button.inline("输入验证码", MENU_LISTENER_CODE)]],
+        )
         await event.answer("已处理发送验证码")
         return
 
@@ -1181,7 +1198,7 @@ async def handle_admin_callback(
     if action == MENU_LISTENER_RELOAD:
         mirror_runtime.admin_state.clear(int(sender_id))
         status = await mirror_runtime.reload()
-        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=status)
+        await reply_listener_hint(event, status)
         await event.answer("已刷新监听状态")
         return
 
@@ -1306,51 +1323,59 @@ async def handle_admin_button_message(
     if lowered.startswith("/listener_phone"):
         value = extract_command_arg(text, "/listener_phone")
         if not value:
-            await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=f"当前监听手机号：{runtime_config.listener_phone or '未配置'}")
+            await reply_listener_hint(event, f"当前监听手机号：{runtime_config.listener_phone or '未配置'}")
             return
         runtime_store.update(listener_phone=value)
-        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=f"监听手机号已保存：{value}\n下一步点【发送验证码】即可。")
+        await reply_listener_hint(
+            event,
+            f"监听手机号已保存：{value}\n下一步请点【发送验证码】。",
+            buttons=[[Button.inline("发送验证码", MENU_LISTENER_SENDCODE)]],
+        )
         return
 
     if lowered.startswith("/listener_session"):
         value = extract_command_arg(text, "/listener_session")
         if not value:
-            await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=f"当前监听 session：{runtime_config.listener_session or 'session/listener.session'}")
+            await reply_listener_hint(event, f"当前监听 session：{runtime_config.listener_session or 'session/listener.session'}")
             return
         runtime_store.update(listener_session=value)
         status = await mirror_runtime.reload()
-        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=f"监听 session 路径已保存：{value}\n{status}")
+        await reply_listener_hint(event, f"监听 session 路径已保存：{value}\n{status}")
         return
 
     if lowered.startswith("/listener_password"):
         value = extract_command_arg(text, "/listener_password")
         if not value:
-            await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint="请这样发：/listener_password 你的两步密码")
+            await reply_listener_hint(event, "请直接发送两步密码。")
             return
         runtime_store.update(listener_password=value)
         pending = code_store.load()
         if pending.password_needed:
             result = await finish_listener_login_with_password(password=value, settings=settings, runtime_store=runtime_store, code_store=code_store)
-            status = await mirror_runtime.reload()
-            await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=f"{result}\n{status}")
+            await mirror_runtime.reload()
+            await reply_listener_hint(event, result)
             return
-        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint="两步密码已保存。")
+        await reply_listener_hint(event, "两步密码已保存。")
         return
 
     if lowered.startswith("/sendcode"):
         value = extract_command_arg(text, "/sendcode")
         result = await send_listener_code(args=args, settings=settings, runtime_store=runtime_store, code_store=code_store, phone_override=value)
-        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=result)
+        await reply_listener_hint(
+            event,
+            result,
+            buttons=[[Button.inline("输入验证码", MENU_LISTENER_CODE)]],
+        )
         return
 
     if lowered.startswith("/code"):
         value = extract_command_arg(text, "/code")
         if not value:
-            await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint="请这样发：/code 12345")
+            await reply_listener_hint(event, "请直接发送验证码。")
             return
         result = await finish_listener_code_login(code=value, args=args, settings=settings, runtime_store=runtime_store, code_store=code_store)
-        status = await mirror_runtime.reload()
-        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime, hint=f"{result}\n{status}")
+        await mirror_runtime.reload()
+        await reply_listener_hint(event, result)
         return
 
     if lowered in {"/buttons", "按钮", "查看按钮"}:
