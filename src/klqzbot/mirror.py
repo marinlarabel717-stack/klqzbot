@@ -1221,6 +1221,43 @@ async def apply_pending_admin_input(
     return False
 
 
+async def apply_listener_login_input(
+    *,
+    text: str,
+    event: Any,
+    settings: Settings,
+    runtime_store: RuntimeConfigStore,
+    code_store: LoginCodeStore,
+    mirror_runtime: MirrorRuntime,
+    args: argparse.Namespace,
+) -> bool:
+    state = code_store.load()
+    if not state.phone_code_hash:
+        return False
+
+    if state.password_needed:
+        result = await finish_listener_login_with_password(
+            password=text,
+            settings=settings,
+            runtime_store=runtime_store,
+            code_store=code_store,
+        )
+        await mirror_runtime.reload()
+        await reply_listener_hint(event, result)
+        return True
+
+    result = await finish_listener_code_login(
+        code=text,
+        args=args,
+        settings=settings,
+        runtime_store=runtime_store,
+        code_store=code_store,
+    )
+    await mirror_runtime.reload()
+    await reply_listener_hint(event, result)
+    return True
+
+
 async def handle_admin_callback(
     event: Any,
     settings: Settings,
@@ -1408,6 +1445,17 @@ async def handle_admin_button_message(
         )
         if handled:
             return
+        handled = await apply_listener_login_input(
+            text=text,
+            event=event,
+            settings=settings,
+            runtime_store=runtime_store,
+            code_store=code_store,
+            mirror_runtime=mirror_runtime,
+            args=args,
+        )
+        if handled:
+            return
 
     runtime_config = runtime_store.load()
 
@@ -1561,7 +1609,7 @@ async def handle_admin_button_message(
 
     button_specs = parse_button_lines(text)
     if not button_specs:
-        await reply_short_message(event, "未识别到有效操作。\n你可以点面板按钮，或者继续用 /source /target /sendcode /code 这些命令。")
+        await reply_short_message(event, "未识别到有效操作。请直接点对应按钮，或按当前流程继续发送内容。")
         return
 
     button_store.save(button_specs)
