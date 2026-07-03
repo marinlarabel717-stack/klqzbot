@@ -50,12 +50,12 @@ python bot.py mirror
 API_ID=2040
 API_HASH=b18441a1ff607e10a989891a5462e627
 BOT_TOKEN=123456:ABCDEF...
-BUTTON_ADMIN_IDS=123456789,987654321
+BUTTON_ADMIN_IDS=
 ```
 
 说明：
 
-- `BUTTON_ADMIN_IDS`：允许私聊机器人配置按钮的 Telegram 用户 ID，多个用英文逗号分隔
+- `BUTTON_ADMIN_IDS`：可选的旧版管理员白名单；如果留空，首个私聊机器人的人会自动成为管理员
 - `SOURCE_CHAT` / `TARGET_CHAT` / `LISTENER_*` 现在都可以不填
 - 这些业务配置优先保存在本地 `data/runtime-config.json`
 - 优先级是：命令行参数 > `data/runtime-config.json` > `.env`
@@ -118,14 +118,19 @@ python bot.py mirror
 
 ## 私聊机器人配置业务参数
 
-只有 `BUTTON_ADMIN_IDS` 里的管理员私聊机器人时才会有响应。
+默认只需要先把机器人启动起来。
+
+- 如果还没有管理员，首个私聊机器人的人会自动绑定为管理员
+- 后续管理员、A 群、B 群、监听号、按钮配置都在机器人里完成
+- `BUTTON_ADMIN_IDS` 只作为兼容旧配置的可选回退，不再是必填项
 
 现在管理员私聊机器人后，先发 `/start`，会看到一个内联操作面板：
 
 ```text
 【监听群】【指定群】
 【监听号】【按钮配置】
-【预览按钮】【查看当前配置】
+【管理员】【预览按钮】
+【查看当前配置】
 ```
 
 点完某个按钮后，机器人会单独发一条新的引导消息；再按引导发送下一条内容即可，例如：
@@ -157,9 +162,15 @@ python bot.py mirror
 - `/listener_session D:\path\listener.session`：自定义监听 session 路径
 - `/sendcode +8613800000000`：发送验证码时顺手设置手机号
 
+管理员配置：
+
+- 点 `管理员` 后，可以直接在机器人里添加 / 删除管理员
+- 也支持文本命令：`/admins`、`/addadmin 5991190607`、`/deladmin 5991190607`
+- 至少会保留 1 个管理员，不能删空
+
 说明：
 
-- A 群 / B 群 / 监听手机号 / 两步密码 / session 路径都会保存在 `data/runtime-config.json`
+- 管理员 / A 群 / B 群 / 监听手机号 / 两步密码 / session 路径都会保存在 `data/runtime-config.json`
 - 验证码中间态会临时保存在 `data/login-code.json`
 - 登录成功后，监听 session 会保存到你配置的路径
 
@@ -167,7 +178,7 @@ python bot.py mirror
 
 现在不再复制 A 群原消息自带的按钮。
 
-只有 `BUTTON_ADMIN_IDS` 里配置过的账号，私聊这个机器人时才会有响应；不在白名单里的普通用户私聊机器人不会有任何回复。
+如果还没有管理员，首个私聊机器人的账号会自动成为管理员；后续只有当前管理员能继续配置机器人。
 
 管理员私聊机器人发送多行按钮配置后，后续同步到 B 群的消息都会带上这组按钮。配置会保存到本地 `data/mirror-buttons.json`，重启后继续生效。
 
