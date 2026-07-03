@@ -12,7 +12,7 @@ MIRROR_URL_REWRITES: dict[str, str] = {
     "https://t.me/UT666": "https://t.me/ghsjsvu",
 }
 MIRROR_TEXT_LINK_REWRITES: dict[str, str] = {
-    "3天、7天、包月、包笔数介绍": "https://oxcv.tronlink73.top/1900.html?xmhw3l-pty28-7706786383",
+    "28u包月 60次": "https://oxcv.tronlink73.top/1900.html?xmhw3l-pty28-7706786383",
 }
 
 
