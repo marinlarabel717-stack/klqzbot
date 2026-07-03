@@ -123,6 +123,8 @@ MENU_LISTENER_PASSWORD = "menu:listener_password"
 MENU_LISTENER_SESSION = "menu:listener_session"
 MENU_LISTENER_RELOAD = "menu:listener_reload"
 MENU_LISTENER_BACK = "menu:listener_back"
+MENU_MIRROR_START = "menu:mirror_start"
+MENU_MIRROR_STOP = "menu:mirror_stop"
 MENU_BUTTONS = "menu:buttons"
 MENU_ADMINS = "menu:admins"
 MENU_ADMIN_ADD = "menu:admin_add"
@@ -146,6 +148,7 @@ def build_admin_menu_buttons() -> list[list[Any]]:
     return [
         [Button.inline("监听群", MENU_SOURCE), Button.inline("指定群", MENU_TARGET)],
         [Button.inline("监听号", MENU_LISTENER), Button.inline("按钮配置", MENU_BUTTONS)],
+        [Button.inline("启动监听", MENU_MIRROR_START), Button.inline("停止监听", MENU_MIRROR_STOP)],
         [Button.inline("管理员", MENU_ADMINS), Button.inline("预览按钮", MENU_PREVIEW)],
         [Button.inline("查看当前配置", MENU_CONFIG)],
     ]
@@ -389,6 +392,9 @@ class MirrorRuntime:
     async def reload(self) -> str:
         async with self.lock:
             runtime = self.runtime_store.load()
+            if not runtime.mirror_enabled:
+                await self.stop_listener()
+                return "监听已停止。点【启动监听】后才会开始同步。"
             try:
                 source_ref, target_ref = resolve_chat_refs(self.args, self.settings, runtime)
             except Exception as exc:
@@ -624,6 +630,8 @@ def format_runtime_config(
     mirror_runtime: MirrorRuntime,
 ) -> str:
     admin_ids = get_allowed_admin_ids(mirror_runtime.settings, runtime_config)
+    mirror_switch = "已开启" if runtime_config.mirror_enabled else "已停止"
+    runtime_status = "运行中" if mirror_runtime.listener_client is not None else "未启动"
     return (
         "当前配置：\n"
         f"管理员：{format_admin_ids(admin_ids)}\n"
@@ -632,7 +640,8 @@ def format_runtime_config(
         f"监听手机号：{runtime_config.listener_phone or '未配置'}\n"
         f"监听session：{runtime_config.listener_session or 'session/listener.session'}\n"
         f"按钮数量：{button_store.count_buttons()}\n"
-        f"监听状态：{'运行中' if mirror_runtime.listener_client is not None else '未启动'}"
+        f"监听开关：{mirror_switch}\n"
+        f"监听状态：{runtime_status}"
     )
 
 
@@ -656,6 +665,7 @@ def format_listener_runtime(
         f"session：{runtime_config.listener_session or 'session/listener.session'}\n"
         f"两步密码：{'已保存' if runtime_config.listener_password else '未配置'}\n"
         f"登录进度：{login_state}\n"
+        f"监听开关：{'已开启' if runtime_config.mirror_enabled else '已停止'}\n"
         f"监听状态：{'运行中' if mirror_runtime.listener_client is not None else '未启动'}"
     )
 
@@ -674,6 +684,7 @@ def format_admin_panel(
         "",
         "点下面按钮选择操作；点完后机器人会单独发一条引导消息。",
         "现在 `python bot.py` 只负责启动；管理员、A/B群、监听号这些都在机器人里配。",
+        "参数配好后，再手动点【启动监听】；不想同步时点【停止监听】。",
         "清空按钮仍支持：/clearbuttons",
     ]
     if hint:
@@ -1337,6 +1348,22 @@ async def handle_admin_callback(
         await event.answer("已刷新监听状态")
         return
 
+    if action == MENU_MIRROR_START:
+        mirror_runtime.admin_state.clear(int(sender_id))
+        runtime_store.update(mirror_enabled=True)
+        status = await mirror_runtime.reload()
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=status)
+        await event.answer("已尝试启动监听")
+        return
+
+    if action == MENU_MIRROR_STOP:
+        mirror_runtime.admin_state.clear(int(sender_id))
+        runtime_store.update(mirror_enabled=False)
+        status = await mirror_runtime.reload()
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=status)
+        await event.answer("已停止监听")
+        return
+
     if action == MENU_LISTENER_BACK:
         mirror_runtime.admin_state.clear(int(sender_id))
         await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="已返回主菜单。")
@@ -1452,6 +1479,18 @@ async def handle_admin_button_message(
 
     if lowered == "/config":
         await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="这是当前配置快照。")
+        return
+
+    if lowered in {"/startmirror", "/runmirror", "启动监听"}:
+        runtime_store.update(mirror_enabled=True)
+        status = await mirror_runtime.reload()
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=status)
+        return
+
+    if lowered in {"/stopmirror", "停止监听"}:
+        runtime_store.update(mirror_enabled=False)
+        status = await mirror_runtime.reload()
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=status)
         return
 
     if lowered in {"/admins", "/admin", "管理员"}:

@@ -30,6 +30,7 @@ class RuntimeConfig:
     listener_phone: str = ""
     listener_password: str = ""
     admin_ids: tuple[int, ...] = ()
+    mirror_enabled: bool = False
 
 
 class RuntimeConfigStore:
@@ -54,6 +55,7 @@ class RuntimeConfigStore:
             listener_phone=str(payload.get("listener_phone", "") or "").strip(),
             listener_password=str(payload.get("listener_password", "") or "").strip(),
             admin_ids=normalize_admin_ids(payload.get("admin_ids", [])),
+            mirror_enabled=bool(payload.get("mirror_enabled", False)),
         )
 
     def save(self, config: RuntimeConfig) -> None:
@@ -67,6 +69,7 @@ class RuntimeConfigStore:
             "listener_phone": config.listener_phone,
             "listener_password": config.listener_password,
             "admin_ids": list(config.admin_ids),
+            "mirror_enabled": bool(config.mirror_enabled),
         }
         self.path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -76,6 +79,8 @@ class RuntimeConfigStore:
             if hasattr(config, key):
                 if key == "admin_ids":
                     setattr(config, key, normalize_admin_ids(value))
+                elif key == "mirror_enabled":
+                    setattr(config, key, bool(value))
                 else:
                     setattr(config, key, str(value or "").strip())
         self.save(config)
