@@ -157,9 +157,7 @@ def build_admin_menu_buttons() -> list[list[Any]]:
 def build_listener_menu_buttons() -> list[list[Any]]:
     return [
         [Button.inline("设置手机号", MENU_LISTENER_PHONE), Button.inline("发送验证码", MENU_LISTENER_SENDCODE)],
-        [Button.inline("输入验证码", MENU_LISTENER_CODE), Button.inline("两步密码", MENU_LISTENER_PASSWORD)],
-        [Button.inline("session路径", MENU_LISTENER_SESSION), Button.inline("刷新监听", MENU_LISTENER_RELOAD)],
-        [Button.inline("返回主菜单", MENU_LISTENER_BACK)],
+        [Button.inline("输入验证码", MENU_LISTENER_CODE), Button.inline("两步验证", MENU_LISTENER_PASSWORD)],
     ]
 
 
@@ -677,19 +675,7 @@ def format_admin_panel(
     *,
     hint: str = "",
 ) -> str:
-    lines = [
-        "管理面板",
-        "",
-        format_runtime_config(runtime_config, button_store, mirror_runtime),
-        "",
-        "点下面按钮选择操作；点完后机器人会单独发一条引导消息。",
-        "现在 `python bot.py` 只负责启动；管理员、A/B群、监听号这些都在机器人里配。",
-        "参数配好后，再手动点【启动监听】；不想同步时点【停止监听】。",
-        "清空按钮仍支持：/clearbuttons",
-    ]
-    if hint:
-        lines.extend(["", hint])
-    return "\n".join(lines)
+    return "管理面板\n\n" + format_runtime_config(runtime_config, button_store, mirror_runtime)
 
 
 def format_listener_panel(
@@ -699,31 +685,11 @@ def format_listener_panel(
     *,
     hint: str = "",
 ) -> str:
-    lines = [
-        "监听号中心",
-        "",
-        format_listener_runtime(runtime_config, code_store, mirror_runtime),
-        "",
-        "推荐顺序：先设置手机号，再点发送验证码，然后点输入验证码完成登录。",
-        "整个流程会写入本地 runtime-config.json，不需要每次靠 .env。",
-    ]
-    if hint:
-        lines.extend(["", hint])
-    return "\n".join(lines)
+    return "监听号中心\n\n" + format_listener_runtime(runtime_config, code_store, mirror_runtime)
 
 
 def format_admin_manage_panel(runtime_config: RuntimeConfig, settings: Settings, *, hint: str = "") -> str:
-    lines = [
-        "管理员配置",
-        "",
-        f"当前管理员：{format_admin_ids(get_allowed_admin_ids(settings, runtime_config))}",
-        "",
-        "点按钮后直接发 Telegram 用户 ID 就行。",
-        "首个私聊机器人的人会自动成为管理员，后面都在这里增删，不用再改 .env。",
-    ]
-    if hint:
-        lines.extend(["", hint])
-    return "\n".join(lines)
+    return "管理员配置\n\n" + f"当前管理员：{format_admin_ids(get_allowed_admin_ids(settings, runtime_config))}"
 
 
 def format_admin_flow_message(action: str) -> str:
@@ -789,6 +755,10 @@ async def reply_listener_hint(
     await event.reply(str(hint or "").strip(), buttons=buttons)
 
 
+async def reply_short_message(event: Any, text: str, *, buttons: Any = None) -> None:
+    await event.reply(str(text or "").strip(), buttons=buttons)
+
+
 async def reply_admin_manage_panel(
     event: Any,
     runtime_store: RuntimeConfigStore,
@@ -832,13 +802,8 @@ async def bootstrap_first_admin(
 
     runtime_store.add_admin_id(int(sender_id))
     log_line("admin_bootstrap", sender_id=int(sender_id), admin_ids=[int(sender_id)])
-    await reply_admin_panel(
-        event,
-        runtime_store,
-        button_store,
-        mirror_runtime,
-        hint="已把你绑定为首个管理员。后续所有业务配置都直接在机器人里完成，不用再改 .env。",
-    )
+    await reply_admin_panel(event, runtime_store, button_store, mirror_runtime)
+    await reply_short_message(event, "已把你绑定为首个管理员。")
     return True
 
 
@@ -1153,14 +1118,14 @@ async def apply_pending_admin_input(
         runtime_store.update(source_chat=text)
         mirror_runtime.admin_state.clear(sender_id)
         status = await mirror_runtime.reload()
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"A群已更新为：{text}\n{status}")
+        await reply_short_message(event, f"A群已更新为：{text}\n{status}")
         return True
 
     if pending == PENDING_TARGET:
         runtime_store.update(target_chat=text)
         mirror_runtime.admin_state.clear(sender_id)
         status = await mirror_runtime.reload()
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"B群已更新为：{text}\n{status}")
+        await reply_short_message(event, f"B群已更新为：{text}\n{status}")
         return True
 
     if pending == PENDING_LISTENER_PHONE:
@@ -1213,47 +1178,44 @@ async def apply_pending_admin_input(
     if pending == PENDING_BUTTONS:
         button_specs = parse_button_lines(text)
         if not button_specs:
-            await reply_admin_panel(
+            await reply_short_message(
                 event,
-                runtime_store,
-                button_store,
-                mirror_runtime,
-                hint="按钮格式不对，请重新发一次：\n按钮文字|https://example.com\n按钮A|https://a.com && 按钮B|https://b.com",
+                "按钮格式不对，请重新发一次：\n按钮文字|https://example.com\n按钮A|https://a.com && 按钮B|https://b.com",
             )
             return True
         button_store.save(button_specs)
         mirror_runtime.admin_state.clear(sender_id)
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"按钮已更新，共 {button_store.count_buttons()} 个。\n{button_store.render_text()}")
+        await reply_short_message(event, f"按钮已更新，共 {button_store.count_buttons()} 个。\n{button_store.render_text()}")
         return True
 
     if pending == PENDING_ADMIN_ADD:
         try:
             admin_id = parse_admin_id(text)
         except ValueError as exc:
-            await reply_admin_manage_panel(event, runtime_store, settings, hint=str(exc))
+            await reply_short_message(event, str(exc))
             return True
         runtime_store.add_admin_id(admin_id, seed_ids=settings.button_admin_ids)
         mirror_runtime.admin_state.clear(sender_id)
-        await reply_admin_manage_panel(event, runtime_store, settings, hint=f"已添加管理员：{admin_id}")
+        await reply_short_message(event, f"已添加管理员：{admin_id}")
         return True
 
     if pending == PENDING_ADMIN_REMOVE:
         try:
             admin_id = parse_admin_id(text)
         except ValueError as exc:
-            await reply_admin_manage_panel(event, runtime_store, settings, hint=str(exc))
+            await reply_short_message(event, str(exc))
             return True
         current_admin_ids = set(get_allowed_admin_ids(settings, runtime_store.load()))
         if admin_id not in current_admin_ids:
             mirror_runtime.admin_state.clear(sender_id)
-            await reply_admin_manage_panel(event, runtime_store, settings, hint=f"管理员 {admin_id} 不在当前列表里。")
+            await reply_short_message(event, f"管理员 {admin_id} 不在当前列表里。")
             return True
         if len(current_admin_ids) <= 1:
-            await reply_admin_manage_panel(event, runtime_store, settings, hint="至少要保留 1 个管理员，不能删空。")
+            await reply_short_message(event, "至少要保留 1 个管理员，不能删空。")
             return True
         runtime_store.remove_admin_id(admin_id, seed_ids=current_admin_ids)
         mirror_runtime.admin_state.clear(sender_id)
-        await reply_admin_manage_panel(event, runtime_store, settings, hint=f"已删除管理员：{admin_id}")
+        await reply_short_message(event, f"已删除管理员：{admin_id}")
         return True
 
     return False
@@ -1291,13 +1253,8 @@ async def handle_admin_callback(
 
     if action == MENU_LISTENER:
         mirror_runtime.admin_state.clear(int(sender_id))
-        await reply_listener_panel(
-            event,
-            runtime_store,
-            code_store,
-            mirror_runtime,
-            hint="监听号改成按钮流程了。按顺序点【设置手机号】->【发送验证码】->【输入验证码】就行。",
-        )
+        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime)
+        await reply_short_message(event, "按顺序点：设置手机号 -> 发送验证码 -> 输入验证码；如果提示需要两步验证，再点两步验证。")
         await event.answer("已打开监听号中心")
         return
 
@@ -1335,24 +1292,11 @@ async def handle_admin_callback(
         await event.answer("等待输入两步密码")
         return
 
-    if action == MENU_LISTENER_SESSION:
-        mirror_runtime.admin_state.set(int(sender_id), PENDING_LISTENER_SESSION)
-        await event.reply(format_admin_flow_message(action))
-        await event.answer("等待输入session路径")
-        return
-
-    if action == MENU_LISTENER_RELOAD:
-        mirror_runtime.admin_state.clear(int(sender_id))
-        status = await mirror_runtime.reload()
-        await reply_listener_hint(event, status)
-        await event.answer("已刷新监听状态")
-        return
-
     if action == MENU_MIRROR_START:
         mirror_runtime.admin_state.clear(int(sender_id))
         runtime_store.update(mirror_enabled=True)
         status = await mirror_runtime.reload()
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=status)
+        await reply_short_message(event, status)
         await event.answer("已尝试启动监听")
         return
 
@@ -1360,14 +1304,8 @@ async def handle_admin_callback(
         mirror_runtime.admin_state.clear(int(sender_id))
         runtime_store.update(mirror_enabled=False)
         status = await mirror_runtime.reload()
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=status)
+        await reply_short_message(event, status)
         await event.answer("已停止监听")
-        return
-
-    if action == MENU_LISTENER_BACK:
-        mirror_runtime.admin_state.clear(int(sender_id))
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="已返回主菜单。")
-        await event.answer("已返回主菜单")
         return
 
     if action == MENU_BUTTONS:
@@ -1378,12 +1316,8 @@ async def handle_admin_callback(
 
     if action == MENU_ADMINS:
         mirror_runtime.admin_state.clear(int(sender_id))
-        await reply_admin_manage_panel(
-            event,
-            runtime_store,
-            settings,
-            hint="管理员也改成机器人内配置了；点下面按钮直接增删即可。",
-        )
+        await reply_admin_manage_panel(event, runtime_store, settings)
+        await reply_short_message(event, "点下面按钮后，直接发送管理员 Telegram 用户 ID 就行。")
         await event.answer("已打开管理员配置")
         return
 
@@ -1401,7 +1335,7 @@ async def handle_admin_callback(
 
     if action == MENU_ADMIN_BACK:
         mirror_runtime.admin_state.clear(int(sender_id))
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="已返回主菜单。")
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime)
         await event.answer("已返回主菜单")
         return
 
@@ -1452,12 +1386,12 @@ async def handle_admin_button_message(
     lowered = text.lower()
     if lowered in {"/start", "/help", "/menu"}:
         mirror_runtime.admin_state.clear(int(sender_id))
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="现在只需要启动机器人；后面的配置都在这里完成。")
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime)
         return
 
     if lowered in {"/cancel", "取消"}:
         mirror_runtime.admin_state.clear(int(sender_id))
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="已取消当前输入。")
+        await reply_short_message(event, "已取消当前输入。")
         return
 
     if not text.startswith("/"):
@@ -1478,88 +1412,84 @@ async def handle_admin_button_message(
     runtime_config = runtime_store.load()
 
     if lowered == "/config":
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="这是当前配置快照。")
+        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime)
         return
 
     if lowered in {"/startmirror", "/runmirror", "启动监听"}:
         runtime_store.update(mirror_enabled=True)
         status = await mirror_runtime.reload()
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=status)
+        await reply_short_message(event, status)
         return
 
     if lowered in {"/stopmirror", "停止监听"}:
         runtime_store.update(mirror_enabled=False)
         status = await mirror_runtime.reload()
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=status)
+        await reply_short_message(event, status)
         return
 
     if lowered in {"/admins", "/admin", "管理员"}:
-        await reply_admin_manage_panel(event, runtime_store, settings, hint="这里可以直接增删管理员，不用再改 .env。")
+        await reply_admin_manage_panel(event, runtime_store, settings)
+        await reply_short_message(event, "这里可以直接增删管理员。")
         return
 
     if lowered.startswith("/addadmin"):
         value = extract_command_arg(text, "/addadmin")
         if not value:
-            await reply_admin_manage_panel(event, runtime_store, settings, hint="请这样发：/addadmin 5991190607")
+            await reply_short_message(event, "请这样发：/addadmin 5991190607")
             return
         try:
             admin_id = parse_admin_id(value)
         except ValueError as exc:
-            await reply_admin_manage_panel(event, runtime_store, settings, hint=str(exc))
+            await reply_short_message(event, str(exc))
             return
         runtime_store.add_admin_id(admin_id, seed_ids=allowed_admin_ids)
-        await reply_admin_manage_panel(event, runtime_store, settings, hint=f"已添加管理员：{admin_id}")
+        await reply_short_message(event, f"已添加管理员：{admin_id}")
         return
 
     if lowered.startswith("/deladmin"):
         value = extract_command_arg(text, "/deladmin")
         if not value:
-            await reply_admin_manage_panel(event, runtime_store, settings, hint="请这样发：/deladmin 5991190607")
+            await reply_short_message(event, "请这样发：/deladmin 5991190607")
             return
         try:
             admin_id = parse_admin_id(value)
         except ValueError as exc:
-            await reply_admin_manage_panel(event, runtime_store, settings, hint=str(exc))
+            await reply_short_message(event, str(exc))
             return
         current_admin_ids = set(get_allowed_admin_ids(settings, runtime_store.load()))
         if admin_id not in current_admin_ids:
-            await reply_admin_manage_panel(event, runtime_store, settings, hint=f"管理员 {admin_id} 不在当前列表里。")
+            await reply_short_message(event, f"管理员 {admin_id} 不在当前列表里。")
             return
         if len(current_admin_ids) <= 1:
-            await reply_admin_manage_panel(event, runtime_store, settings, hint="至少要保留 1 个管理员，不能删空。")
+            await reply_short_message(event, "至少要保留 1 个管理员，不能删空。")
             return
         runtime_store.remove_admin_id(admin_id, seed_ids=current_admin_ids)
-        await reply_admin_manage_panel(event, runtime_store, settings, hint=f"已删除管理员：{admin_id}")
+        await reply_short_message(event, f"已删除管理员：{admin_id}")
         return
 
     if lowered in {"/listener", "/listener_menu"}:
-        await reply_listener_panel(
-            event,
-            runtime_store,
-            code_store,
-            mirror_runtime,
-            hint="这里是监听号专用面板。直接点按钮配置，不需要再去改 .env。",
-        )
+        await reply_listener_panel(event, runtime_store, code_store, mirror_runtime)
+        await reply_short_message(event, "按顺序点：设置手机号 -> 发送验证码 -> 输入验证码；如果提示需要两步验证，再点两步验证。")
         return
 
     if lowered.startswith("/source"):
         value = extract_command_arg(text, "/source")
         if not value:
-            await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"当前 A 群：{runtime_config.source_chat or '未配置'}")
+            await reply_short_message(event, f"当前 A 群：{runtime_config.source_chat or '未配置'}")
             return
         runtime_store.update(source_chat=value)
         status = await mirror_runtime.reload()
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"A群已更新为：{value}\n{status}")
+        await reply_short_message(event, f"A群已更新为：{value}\n{status}")
         return
 
     if lowered.startswith("/target"):
         value = extract_command_arg(text, "/target")
         if not value:
-            await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"当前 B 群：{runtime_config.target_chat or '未配置'}")
+            await reply_short_message(event, f"当前 B 群：{runtime_config.target_chat or '未配置'}")
             return
         runtime_store.update(target_chat=value)
         status = await mirror_runtime.reload()
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"B群已更新为：{value}\n{status}")
+        await reply_short_message(event, f"B群已更新为：{value}\n{status}")
         return
 
     if lowered.startswith("/listener_phone"):
@@ -1621,21 +1551,21 @@ async def handle_admin_button_message(
         return
 
     if lowered in {"/buttons", "按钮", "查看按钮"}:
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=button_store.render_text())
+        await reply_short_message(event, button_store.render_text())
         return
 
     if lowered in {"/clearbuttons", "/clear", "清空按钮"}:
         button_store.clear()
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="已清空按钮配置。")
+        await reply_short_message(event, "已清空按钮配置。")
         return
 
     button_specs = parse_button_lines(text)
     if not button_specs:
-        await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint="未识别到有效操作。\n你可以点面板按钮，或者继续用 /source /target /sendcode /code 这些命令。")
+        await reply_short_message(event, "未识别到有效操作。\n你可以点面板按钮，或者继续用 /source /target /sendcode /code 这些命令。")
         return
 
     button_store.save(button_specs)
-    await reply_admin_panel(event, runtime_store, button_store, mirror_runtime, hint=f"按钮已更新，共 {button_store.count_buttons()} 个。\n{button_store.render_text()}")
+    await reply_short_message(event, f"按钮已更新，共 {button_store.count_buttons()} 个。\n{button_store.render_text()}")
 
 
 async def run_mirror(args: argparse.Namespace) -> int:
