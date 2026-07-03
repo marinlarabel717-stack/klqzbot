@@ -11,6 +11,9 @@ from telethon.tl import functions, types
 MIRROR_URL_REWRITES: dict[str, str] = {
     "https://t.me/UT666": "https://t.me/ghsjsvu",
 }
+MIRROR_TEXT_REWRITES: dict[str, str] = {
+    "3天、7天、包月、包笔数介绍": "28u包月 60次",
+}
 MIRROR_TEXT_LINK_REWRITES: dict[str, str] = {
     "28u包月 60次": "https://oxcv.tronlink73.top/1900.html?xmhw3l-pty28-7706786383",
 }
@@ -112,6 +115,8 @@ def rewrite_mirror_links(message_text: str, entities: Any) -> tuple[str, Any]:
         for old_url, new_url in MIRROR_URL_REWRITES.items():
             text = text.replace(old_url, new_url)
 
+    text, entities = rewrite_entity_texts(text, entities, MIRROR_TEXT_REWRITES)
+
     if not entities:
         return text, entities
 
@@ -131,6 +136,76 @@ def rewrite_mirror_links(message_text: str, entities: Any) -> tuple[str, Any]:
         if rewritten_url and current_url:
             entity.url = rewritten_url
     return text, entities
+
+
+def rewrite_entity_texts(message_text: str, entities: Any, replacements: dict[str, str]) -> tuple[str, Any]:
+    text = str(message_text or "")
+    if not text or not replacements:
+        return text, entities
+    if not entities:
+        for old_text, new_text in replacements.items():
+            text = text.replace(old_text, new_text)
+        return text, entities
+
+    surrogate_text = add_surrogate(text)
+    replacement_spans: list[dict[str, Any]] = []
+
+    for entity in entities:
+        offset = int(getattr(entity, "offset", 0) or 0)
+        length = int(getattr(entity, "length", 0) or 0)
+        if length <= 0:
+            continue
+        entity_text = del_surrogate(surrogate_text[offset : offset + length]).strip()
+        rewritten_text = replacements.get(entity_text)
+        if not rewritten_text:
+            continue
+        replacement_spans.append(
+            {
+                "entity": entity,
+                "start": offset,
+                "end": offset + length,
+                "replacement": add_surrogate(rewritten_text),
+            }
+        )
+
+    if not replacement_spans:
+        for old_text, new_text in replacements.items():
+            text = text.replace(old_text, new_text)
+        return text, entities
+
+    replacement_spans.sort(key=lambda item: item["start"])
+    rebuilt_parts: list[str] = []
+    cursor = 0
+    shift = 0
+
+    for span in replacement_spans:
+        start = int(span["start"])
+        end = int(span["end"])
+        replacement = str(span["replacement"])
+        rebuilt_parts.append(surrogate_text[cursor:start])
+        rebuilt_parts.append(replacement)
+        span["entity"].offset = start + shift
+        span["entity"].length = len(replacement)
+        shift += len(replacement) - (end - start)
+        cursor = end
+
+    rebuilt_parts.append(surrogate_text[cursor:])
+    updated_text = del_surrogate("".join(rebuilt_parts))
+
+    total_shift = 0
+    span_iter = iter(replacement_spans)
+    current_span = next(span_iter, None)
+    for entity in entities:
+        if current_span is not None and entity is current_span["entity"]:
+            total_shift += len(str(current_span["replacement"])) - (
+                int(current_span["end"]) - int(current_span["start"])
+            )
+            current_span = next(span_iter, None)
+            continue
+        entity_offset = int(getattr(entity, "offset", 0) or 0)
+        entity.offset = entity_offset + total_shift
+
+    return updated_text, entities
 
 
 def extract_configured_buttons(message_text: str, *, enabled: bool) -> tuple[str, Any]:
