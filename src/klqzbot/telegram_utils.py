@@ -5,10 +5,14 @@ from io import BytesIO
 from typing import Any
 
 from telethon import Button, TelegramClient
+from telethon.helpers import add_surrogate, del_surrogate
 from telethon.tl import functions, types
 
 MIRROR_URL_REWRITES: dict[str, str] = {
     "https://t.me/UT666": "https://t.me/ghsjsvu",
+}
+MIRROR_TEXT_LINK_REWRITES: dict[str, str] = {
+    "3天、7天、包月、包笔数介绍": "https://oxcv.tronlink73.top/1900.html?xmhw3l-pty28-7706786383",
 }
 
 
@@ -111,10 +115,21 @@ def rewrite_mirror_links(message_text: str, entities: Any) -> tuple[str, Any]:
     if not entities:
         return text, entities
 
+    surrogate_text = add_surrogate(text)
     for entity in entities:
         current_url = str(getattr(entity, "url", "") or "").strip()
         if current_url and current_url in MIRROR_URL_REWRITES:
             entity.url = MIRROR_URL_REWRITES[current_url]
+            continue
+
+        offset = int(getattr(entity, "offset", 0) or 0)
+        length = int(getattr(entity, "length", 0) or 0)
+        if length <= 0:
+            continue
+        entity_text = del_surrogate(surrogate_text[offset : offset + length]).strip()
+        rewritten_url = MIRROR_TEXT_LINK_REWRITES.get(entity_text)
+        if rewritten_url and current_url:
+            entity.url = rewritten_url
     return text, entities
 
 
