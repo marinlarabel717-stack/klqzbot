@@ -7,6 +7,10 @@ from typing import Any
 from telethon import Button, TelegramClient
 from telethon.tl import functions, types
 
+MIRROR_URL_REWRITES: dict[str, str] = {
+    "https://t.me/UT666": "https://t.me/ghsjsvu",
+}
+
 
 def extract_invite_hash(raw: str) -> str:
     matched = re.search(r"(?:https?://)?t\.me/(?:joinchat/|\+)([^/?#]+)", raw, re.I)
@@ -96,6 +100,22 @@ def clone_buttons(message_buttons: Any) -> Any:
         if cloned_row:
             cloned_rows.append(cloned_row)
     return cloned_rows or None
+
+
+def rewrite_mirror_links(message_text: str, entities: Any) -> tuple[str, Any]:
+    text = str(message_text or "")
+    if MIRROR_URL_REWRITES:
+        for old_url, new_url in MIRROR_URL_REWRITES.items():
+            text = text.replace(old_url, new_url)
+
+    if not entities:
+        return text, entities
+
+    for entity in entities:
+        current_url = str(getattr(entity, "url", "") or "").strip()
+        if current_url and current_url in MIRROR_URL_REWRITES:
+            entity.url = MIRROR_URL_REWRITES[current_url]
+    return text, entities
 
 
 def extract_configured_buttons(message_text: str, *, enabled: bool) -> tuple[str, Any]:

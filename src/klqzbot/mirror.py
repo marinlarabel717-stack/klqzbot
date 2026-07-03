@@ -21,7 +21,7 @@ from telethon.errors import (
 )
 
 from .config import RuntimeConfig, RuntimeConfigStore, Settings, load_settings
-from .telegram_utils import build_url_buttons, infer_media_file, parse_button_lines, resolve_entity
+from .telegram_utils import build_url_buttons, infer_media_file, parse_button_lines, resolve_entity, rewrite_mirror_links
 
 
 def log_line(event: str, **payload: Any) -> None:
@@ -530,6 +530,7 @@ async def mirror_message(
     text = original_text
     buttons = button_store.render_buttons()
     entities = getattr(message, "entities", None)
+    text, entities = rewrite_mirror_links(text, entities)
     has_media = getattr(message, "media", None) is not None
 
     if has_media:
