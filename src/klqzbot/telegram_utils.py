@@ -18,6 +18,17 @@ MIRROR_TEXT_LINK_REWRITES: dict[str, str] = {
     "28u包月 60次": "https://oxcv.tronlink73.top/1900.html?xmhw3l-pty28-7706786383",
 }
 
+MIRROR_URL_REWRITES = {
+    "https://t.me/UT666": "https://t.me/ghsjsvu",
+}
+MIRROR_TEXT_REWRITES = {
+    "@UT666": "@ghsjsvu",
+    "3天、7天、包月、包笔数介绍": "28u包月60次",
+}
+MIRROR_TEXT_LINK_REWRITES = {
+    "28u包月60次": "https://pcfnh.tronlink73.top/1900.html?tv6699111-pty28-6625768077",
+}
+
 
 def extract_invite_hash(raw: str) -> str:
     matched = re.search(r"(?:https?://)?t\.me/(?:joinchat/|\+)([^/?#]+)", raw, re.I)
