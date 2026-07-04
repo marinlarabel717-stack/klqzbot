@@ -168,7 +168,7 @@ def build_admin_manage_buttons() -> list[list[Any]]:
     ]
 
 
-@dataclass(slots=True)
+@dataclass
 class ButtonConfigStore:
     path: Path
     button_specs: list[list[dict[str, str]]] = field(default_factory=list)
@@ -234,7 +234,7 @@ class ButtonConfigStore:
         return sum(len(row) for row in self.button_specs)
 
 
-@dataclass(slots=True)
+@dataclass
 class LoginCodeState:
     phone: str = ""
     phone_code_hash: str = ""
@@ -277,7 +277,7 @@ class LoginCodeStore:
             self.path.unlink(missing_ok=True)
 
 
-@dataclass(slots=True)
+@dataclass
 class AdminInputState:
     pending_by_user: dict[int, str] = field(default_factory=dict)
 

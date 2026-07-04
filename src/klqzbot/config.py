@@ -8,7 +8,7 @@ from typing import Any
 from dotenv import load_dotenv
 
 
-@dataclass(slots=True)
+@dataclass
 class Settings:
     api_id: int
     api_hash: str
@@ -22,7 +22,7 @@ class Settings:
     button_admin_ids: frozenset[int]
 
 
-@dataclass(slots=True)
+@dataclass
 class RuntimeConfig:
     source_chat: str = ""
     target_chat: str = ""
